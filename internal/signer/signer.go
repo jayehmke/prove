@@ -195,6 +195,9 @@ var ErrUntrusted = errors.New("key is not trusted")
 func (t *TrustSet) Verify(ctx context.Context, keyID string, msg, sig []byte) (string, error) {
 	cands := t.byKeyID[keyID]
 	if len(cands) == 0 {
+		if k := sshsigKeyID(sig); k != "" && k != keyID {
+			return "", fmt.Errorf("keyid %s does not match the key that made the signature", keyID)
+		}
 		return "", ErrUntrusted
 	}
 	var firstErr error

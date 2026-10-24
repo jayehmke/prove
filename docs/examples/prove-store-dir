@@ -1,0 +1,48 @@
+#!/bin/sh
+# prove-store-dir: a prove store adapter that keeps records in a folder.
+# A worked example for docs/adapters.md. Needs jq.
+#
+#   store:
+#     type: dir
+#     options:
+#       dir: /srv/prove-records
+#
+# prove checks every record id (64 hex digits) before calling an adapter,
+# so an id is always safe to use as a file name.
+set -eu
+
+req=$(cat)
+field() { printf '%s' "$req" | jq -r "$1"; }
+
+dir=$(field '.config.dir // empty')
+if [ -z "$dir" ]; then
+  echo '{"error":"set store.options.dir in .prove.yaml"}'
+  exit 1
+fi
+mkdir -p "$dir"
+
+case "$(field .op)" in
+put)
+  id=$(field .meta.id)
+  field .record >"$dir/$id.record"
+  printf '%s' "$req" | jq -c .meta >"$dir/$id.meta"
+  echo '{"ok":true}'
+  ;;
+get)
+  id=$(field .id)
+  if [ ! -f "$dir/$id.record" ]; then
+    jq -n --arg id "$id" '{error: "no record \($id)"}'
+    exit 1
+  fi
+  jq -n --rawfile r "$dir/$id.record" '{record: ($r | rtrimstr("\n"))}'
+  ;;
+list)
+  # prove filters the answer by the query itself, so returning every
+  # record is correct; a real store would use the query to read less.
+  find "$dir" -name '*.meta' -exec cat {} + | jq -s '{records: .}'
+  ;;
+*)
+  echo '{"error":"unknown op"}'
+  exit 1
+  ;;
+esac

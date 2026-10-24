@@ -187,3 +187,24 @@ func verifySSH(pub ssh.PublicKey, msg, blob []byte) error {
 	}
 	return nil
 }
+
+// sshsigKeyID returns the fingerprint of the key inside an SSHSIG
+// signature, or "" when sig is not one.
+func sshsigKeyID(blob []byte) string {
+	if len(blob) < 6 || string(blob[:6]) != sshsigMagic {
+		return ""
+	}
+	var parsed struct {
+		Version   uint32
+		PublicKey []byte
+		Rest      []byte `ssh:"rest"`
+	}
+	if err := ssh.Unmarshal(blob[6:], &parsed); err != nil {
+		return ""
+	}
+	pub, err := ssh.ParsePublicKey(parsed.PublicKey)
+	if err != nil {
+		return ""
+	}
+	return ssh.FingerprintSHA256(pub)
+}

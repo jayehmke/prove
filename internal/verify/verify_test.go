@@ -2,6 +2,7 @@ package verify_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -392,4 +393,35 @@ checks:
 			t.Fatalf("failures should name unit: %q", rep.Failures)
 		}
 	})
+}
+
+func TestVerifyFindsTheUsableRecordAmongMany(t *testing.T) {
+	e := newEnv(t, `
+signers:
+  tester: $TESTER
+checks:
+  - name: unit
+    run: "true"
+    inputs: ["src/**"]
+`)
+	// The usable record is older than several that no longer match.
+	testutil.WriteFile(t, e.repo, "src/a.go", "package a\n")
+	good := testutil.Commit(t, e.repo, "good")
+	e.run(e.check("unit"), e.key.Signer)
+	for i := 0; i < 5; i++ {
+		testutil.WriteFile(t, e.repo, "src/a.go", fmt.Sprintf("package a // %d\n", i))
+		testutil.Commit(t, e.repo, "other")
+		e.run(e.check("unit"), e.key.Signer)
+	}
+	testutil.WriteFile(t, e.repo, "src/a.go", "package a\n")
+	testutil.WriteFile(t, e.repo, "docs/x.md", "x\n")
+	head := testutil.Commit(t, e.repo, "back to the good inputs")
+	if r := result(t, e.verify(head, 0), "unit"); !r.OK || r.RecordCommit != good {
+		t.Fatalf("should reuse the record from %s: %+v", good, r)
+	}
+	testutil.WriteFile(t, e.repo, "src/a.go", "package a // new\n")
+	head = testutil.Commit(t, e.repo, "new src")
+	if r := result(t, e.verify(head, 0), "unit"); r.OK || !strings.Contains(r.Reason, "inputs changed") {
+		t.Fatalf("no record matches the new inputs: %+v", r)
+	}
 }

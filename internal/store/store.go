@@ -4,7 +4,9 @@ package store
 
 import (
 	"context"
-	"errors"
+	"fmt"
+	"path/filepath"
+	"regexp"
 	"time"
 
 	"github.com/jayehmke/prove/internal/config"
@@ -33,6 +35,15 @@ type Query struct {
 	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
+// Match reports whether m is selected by q.
+func (q Query) Match(m Meta) bool {
+	return (q.Check == "" || q.Check == m.Check) &&
+		(q.Commit == "" || q.Commit == m.Commit) &&
+		(q.Tree == "" || q.Tree == m.Tree) &&
+		(q.Signer == "" || q.Signer == m.Signer) &&
+		(q.Fingerprint == "" || q.Fingerprint == m.Fingerprint)
+}
+
 // Store keeps records.
 type Store interface {
 	// Name describes the store for messages.
@@ -45,25 +56,33 @@ type Store interface {
 	List(ctx context.Context, q Query) ([]Meta, error)
 }
 
-var errNotImplemented = errors.New("not implemented")
+var idPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// NewLocal returns the store that keeps records in a folder.
-func NewLocal(dir string) Store { return stub{} }
-
-// NewGit returns the store that keeps records under refs/prove/.
-func NewGit(repo *gitx.Repo) Store { return stub{} }
-
-// NewExternal returns the prove-store-<name> adapter store.
-func NewExternal(name string, options map[string]any) Store { return stub{} }
-
-// Open returns the store a policy names. A nil cfg means the default.
-func Open(ctx context.Context, cfg config.StoreConfig, repo *gitx.Repo) (Store, error) {
-	return nil, errNotImplemented
+func checkID(id string) error {
+	if !idPattern.MatchString(id) {
+		return fmt.Errorf("bad record id %q: want 64 lowercase hex digits", id)
+	}
+	return nil
 }
 
-type stub struct{}
-
-func (stub) Name() string                                { return "stub" }
-func (stub) Put(context.Context, Meta, []byte) error     { return errNotImplemented }
-func (stub) Get(context.Context, string) ([]byte, error) { return nil, errNotImplemented }
-func (stub) List(context.Context, Query) ([]Meta, error) { return nil, errNotImplemented }
+// Open returns the store a policy names. The default is the git store.
+func Open(ctx context.Context, cfg config.StoreConfig, repo *gitx.Repo) (Store, error) {
+	switch cfg.Type {
+	case "", "git":
+		return NewGit(repo), nil
+	case "local":
+		dir := cfg.Path
+		if dir == "" {
+			common, err := repo.CommonDir(ctx)
+			if err != nil {
+				return nil, err
+			}
+			dir = filepath.Join(common, "prove", "records")
+		} else if !filepath.IsAbs(dir) {
+			dir = filepath.Join(repo.Dir, dir)
+		}
+		return NewLocal(dir), nil
+	default:
+		return NewExternal(cfg.Type, cfg.Options), nil
+	}
+}

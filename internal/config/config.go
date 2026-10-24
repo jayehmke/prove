@@ -172,6 +172,9 @@ func (c *Config) validate() error {
 				return fmt.Errorf("check %q: %w", ch.Name, err)
 			}
 		}
+		if ch.JUnit != "" && (filepath.IsAbs(ch.JUnit) || !filepath.IsLocal(filepath.FromSlash(ch.JUnit))) {
+			return fmt.Errorf("check %q: junit path %q must be inside the repository", ch.Name, ch.JUnit)
+		}
 		for _, s := range ch.Signers {
 			if _, ok := c.Signers[s]; !ok {
 				return fmt.Errorf("check %q allows signer %q, which is not in signers", ch.Name, s)
