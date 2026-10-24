@@ -156,8 +156,8 @@ func (r *Repo) ReadObjects(revs []string, fn func(rev string, content []byte, er
 		for _, rev := range revs {
 			fmt.Fprintln(w, rev)
 		}
-		w.Flush()
-		stdin.Close()
+		_ = w.Flush()
+		_ = stdin.Close()
 	}()
 	br := bufio.NewReader(stdout)
 	var fnErr error

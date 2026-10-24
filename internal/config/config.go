@@ -20,7 +20,7 @@ const FileName = ".prove.yaml"
 
 // DefaultRequirementPattern finds requirement IDs such as AC-807-1 in test
 // names when the policy doesn't set one.
-const DefaultRequirementPattern = `\bAC-[0-9]+(?:-[0-9]+)*\b`
+const DefaultRequirementPattern = `AC-[0-9]+(?:-[0-9]+)*`
 
 // Config is a parsed .prove.yaml.
 type Config struct {
