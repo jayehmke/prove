@@ -50,6 +50,9 @@ sample: 10
 		"sample: 200\n":                                           "sample",
 		"chekcs: []\n":                                            "chekcs",
 		"version: 2\n":                                            "version",
+		"store: x/run\n":                                          "store type",
+		"store: {type: ../x}\n":                                   "store type",
+		"signers: {m: {type: x/run, key: k}}\n":                   "signer \"m\" type",
 	} {
 		if _, err := Parse([]byte(yml)); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("Parse(%q) = %v, want an error containing %q", yml, err, want)

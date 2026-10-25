@@ -75,6 +75,9 @@ func files(ctx context.Context, repo *gitx.Repo, h hash.Hash, kind string, entri
 		}
 	}
 	err := repo.ReadBlobs(ctx, blobs, func(i int, data []byte) error {
+		if data == nil {
+			return fmt.Errorf("%s: git object %s is missing (a shallow or partial clone?)", entries[idx[i]].Path, blobs[i])
+		}
 		sum := sha256.Sum256(data)
 		sums[idx[i]] = hex.EncodeToString(sum[:])
 		return nil

@@ -71,7 +71,8 @@ func (l *Local) List(_ context.Context, q Query) ([]Meta, error) {
 		}
 		var m Meta
 		if err := json.Unmarshal(data, &m); err != nil {
-			return nil, fmt.Errorf("%s: %v", filepath.Join(dir, n.Name()), err)
+			skip(l.Name(), n.Name(), err)
+			continue
 		}
 		if q.Match(m) {
 			out = append(out, m)

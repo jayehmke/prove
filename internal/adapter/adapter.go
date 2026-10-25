@@ -10,8 +10,13 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strings"
 )
+
+// programPattern is a bare program name: no path separator, so exec only
+// ever finds it on PATH, never as a file in the working directory.
+var programPattern = regexp.MustCompile(`^prove-(store|signer)-[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 // Program returns the executable name of an adapter.
 func Program(kind, name string) string { return "prove-" + kind + "-" + name }
@@ -20,6 +25,9 @@ func Program(kind, name string) string { return "prove-" + kind + "-" + name }
 // into resp. A non-zero exit, an {"error": "..."} answer or a response that
 // is not JSON is an error that names the adapter.
 func Call(ctx context.Context, program string, req, resp any) error {
+	if !programPattern.MatchString(program) {
+		return fmt.Errorf("%q is not a valid adapter name: adapters are prove-store-<name> or prove-signer-<name> on PATH, and a name is letters, digits, '.', '_' or '-'", program)
+	}
 	path, err := exec.LookPath(program)
 	if err != nil {
 		return fmt.Errorf("adapter %s is not on PATH", program)

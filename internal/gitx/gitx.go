@@ -138,7 +138,8 @@ func (r *Repo) ListTree(ctx context.Context, tree string) ([]Entry, error) {
 }
 
 // ReadBlobs streams the contents of objects through one git cat-file
-// process and calls fn for each, in the order given.
+// process and calls fn for each, in the order given. fn gets nil data for
+// an object that does not exist.
 func (r *Repo) ReadBlobs(ctx context.Context, objects []string, fn func(i int, data []byte) error) error {
 	if len(objects) == 0 {
 		return nil
@@ -175,7 +176,7 @@ func (r *Repo) ReadBlobs(ctx context.Context, objects []string, fn func(i int, d
 	}()
 	br := bufio.NewReader(stdout)
 	var readErr error
-	for i, o := range objects {
+	for i := range objects {
 		header, err := br.ReadString('\n')
 		if err != nil {
 			readErr = fmt.Errorf("git cat-file: %w", err)
@@ -183,8 +184,11 @@ func (r *Repo) ReadBlobs(ctx context.Context, objects []string, fn func(i int, d
 		}
 		f := strings.Fields(header)
 		if len(f) == 2 && f[1] == "missing" {
-			readErr = fmt.Errorf("git object %s is missing", o)
-			break
+			if err := fn(i, nil); err != nil {
+				readErr = err
+				break
+			}
+			continue
 		}
 		if len(f) != 3 {
 			readErr = fmt.Errorf("git cat-file: unexpected header %q", header)

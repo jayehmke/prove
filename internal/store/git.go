@@ -111,9 +111,14 @@ func (g *Git) List(ctx context.Context, q Query) ([]Meta, error) {
 	}
 	var metas []Meta
 	err = g.Repo.ReadBlobs(ctx, refs, func(i int, data []byte) error {
+		if data == nil {
+			skip(g.Name(), refs[i], fmt.Errorf("no meta.json"))
+			return nil
+		}
 		var m Meta
 		if err := json.Unmarshal(data, &m); err != nil {
-			return fmt.Errorf("%s: %v", refs[i], err)
+			skip(g.Name(), refs[i], err)
+			return nil
 		}
 		if q.Match(m) {
 			metas = append(metas, m)

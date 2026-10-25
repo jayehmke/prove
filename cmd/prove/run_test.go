@@ -105,3 +105,31 @@ func TestRunRefusesDirtyTree(t *testing.T) {
 		})
 	}
 }
+
+func TestRunRefusesTreeChangedByCheck(t *testing.T) {
+	for _, tc := range []struct{ name, run, path string }{
+		{"edits a tracked file", "echo patched > README.md", "README.md"},
+		{"adds an untracked file", "echo gen > generated.go", "generated.go"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, _ := setup(t, `
+signers:
+  tester: $TESTER
+checks:
+  - name: unit
+    run: "`+tc.run+`"
+`)
+			head := testutil.Head(t, repo)
+			code, _, errOut := prove(t, "run", "unit")
+			if code == 0 {
+				t.Fatal("a run that changed the tree exited 0")
+			}
+			if !strings.Contains(errOut, "changed the working tree") || !strings.Contains(errOut, tc.path) {
+				t.Fatalf("stderr should say the check changed %s:\n%s", tc.path, errOut)
+			}
+			if recs := records(t, repo, head); len(recs) != 0 {
+				t.Fatalf("a run that changed the tree stored %d records", len(recs))
+			}
+		})
+	}
+}

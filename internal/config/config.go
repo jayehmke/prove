@@ -185,6 +185,12 @@ func (c *Config) validate() error {
 		if k.Key == "" {
 			return fmt.Errorf("signer %q has no key", id)
 		}
+		if !ValidName(k.Type) {
+			return fmt.Errorf("signer %q type %q must be ssh or an adapter name (letters, digits, '.', '_' or '-')", id, k.Type)
+		}
+	}
+	if c.Store.Type != "" && !ValidName(c.Store.Type) {
+		return fmt.Errorf("store type %q must be git, local or an adapter name (letters, digits, '.', '_' or '-')", c.Store.Type)
 	}
 	if c.Requirements.Pattern != "" {
 		if _, err := regexp.Compile(c.Requirements.Pattern); err != nil {

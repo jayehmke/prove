@@ -51,6 +51,17 @@ never earned. prove narrows that with completeness (every policy check needs
 a record), command match, fingerprint recompute, `--sample` reruns, and
 `signers:` rules that say who may sign which check.
 
+`prove verify` reads `.prove.yaml` from the checkout it runs in. In CI on a
+pull request, the PR therefore decides its own checks, signers and required
+IDs (it could add its own key), the same trust as a PR editing its CI
+workflow. To hold a PR to the base branch's rules, verify with the base
+branch's policy.
+
+A check must leave the working tree as it found it. If the command edits
+tracked files or writes files git doesn't ignore (`--fix`, `gofmt -w`,
+codegen), `prove run` stores nothing and names the changed paths, because
+the command did not test the committed code.
+
 ## Quick start
 
 ```console

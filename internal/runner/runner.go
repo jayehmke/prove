@@ -57,15 +57,20 @@ func CheckClean(ctx context.Context, repo *gitx.Repo) error {
 	if len(dirty) == 0 {
 		return nil
 	}
-	shown := dirty
+	return fmt.Errorf("%w (%s): commit them first, because a record describes committed code", ErrDirty, summarize(dirty))
+}
+
+// summarize lists up to five paths.
+func summarize(paths []string) string {
+	shown := paths
 	if len(shown) > 5 {
 		shown = shown[:5]
 	}
-	more := ""
-	if len(dirty) > len(shown) {
-		more = fmt.Sprintf(" and %d more", len(dirty)-len(shown))
+	s := strings.Join(shown, ", ")
+	if len(paths) > len(shown) {
+		s += fmt.Sprintf(" and %d more", len(paths)-len(shown))
 	}
-	return fmt.Errorf("%w (%s%s): commit them first, because a record describes committed code", ErrDirty, strings.Join(shown, ", "), more)
+	return s
 }
 
 // Run runs the check on HEAD and stores its signed record. It refuses a
@@ -110,6 +115,13 @@ func Run(ctx context.Context, o Options) (*Outcome, error) {
 		return nil, err
 	}
 	finished := time.Now().UTC()
+	// The record claims the committed tree passed, so the command must have
+	// run on exactly that tree.
+	if dirty, err := o.Repo.DirtyPaths(ctx); err != nil {
+		return nil, err
+	} else if len(dirty) > 0 {
+		return nil, fmt.Errorf("the check changed the working tree (%s), so it did not test the committed code: no record stored. Make it leave tracked files alone and git-ignore what it writes", summarize(dirty))
+	}
 
 	pred := record.Predicate{
 		Check:       check.Name,

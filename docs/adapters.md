@@ -9,6 +9,10 @@ Storage and signing are adapters. prove has three built in: the `local` and
 | store  | `prove-store-<name>`   | `store: {type: <name>}` in `.prove.yaml`  |
 | signer | `prove-signer-<name>`  | `PROVE_SIGNER=<name>` when signing; `{type: <name>, key: ...}` under `signers:` when verifying |
 
+`<name>` is letters, digits, `.`, `_` and `-`. prove refuses any other
+name, so an adapter is always a program found on `PATH`, never a file in
+the repository.
+
 ## The protocol
 
 prove starts the program once per request. It writes one JSON object to the

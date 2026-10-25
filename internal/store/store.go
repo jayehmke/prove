@@ -5,6 +5,8 @@ package store
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"regexp"
 	"time"
@@ -54,6 +56,15 @@ type Store interface {
 	Get(ctx context.Context, id string) ([]byte, error)
 	// List returns the metadata of the records matching q.
 	List(ctx context.Context, q Query) ([]Meta, error)
+}
+
+// Warnings receives notes about index entries a store skipped.
+var Warnings io.Writer = os.Stderr
+
+// skip notes an unreadable index entry. The index is only a lookup hint,
+// so a bad entry hides that record instead of failing every check.
+func skip(store, entry string, err error) {
+	fmt.Fprintf(Warnings, "prove: %s: skipping unreadable index entry %s: %v\n", store, entry, err)
 }
 
 var idPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)

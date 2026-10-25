@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -214,4 +215,52 @@ esac
 			t.Fatalf("missing adapter: %v", err)
 		}
 	})
+}
+
+func TestListSkipsUnreadableIndexEntries(t *testing.T) {
+	repo := testutil.NewRepo(t)
+	var warnings strings.Builder
+	old := store.Warnings
+	store.Warnings = &warnings
+	t.Cleanup(func() { store.Warnings = old })
+
+	localDir := t.TempDir()
+	for _, s := range []store.Store{store.NewLocal(localDir), store.NewGit(repo)} {
+		good := put(t, s, "unit", "c1", "t1", "alice")
+		bad := put(t, s, "lint", "c1", "t1", "bob")
+		// Corrupt bad's index entry the way a broken fetch or a crash might.
+		switch s.(type) {
+		case *store.Local:
+			if err := os.WriteFile(filepath.Join(localDir, "index", bad.ID+".json"), []byte("{not json"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		case *store.Git:
+			blob := strings.TrimSpace(runSh(t, repo.Dir, "printf '{not json' | git hash-object -w --stdin"))
+			tree := strings.TrimSpace(runSh(t, repo.Dir, "printf '100644 blob "+blob+"\\tmeta.json\\n' | git mktree"))
+			commit := strings.TrimSpace(runSh(t, repo.Dir, "git commit-tree "+tree+" -m bad"))
+			testutil.Git(t, repo.Dir, "update-ref", store.RefPrefix+bad.ID, commit)
+		}
+		warnings.Reset()
+		got, err := s.List(context.Background(), store.Query{})
+		if err != nil {
+			t.Fatalf("%s: one bad index entry failed the whole list: %v", s.Name(), err)
+		}
+		if !reflect.DeepEqual(ids(got), []string{good.ID}) {
+			t.Fatalf("%s list = %v, want only %s", s.Name(), ids(got), good.ID)
+		}
+		if !strings.Contains(warnings.String(), bad.ID) {
+			t.Fatalf("%s should warn about %s, warned %q", s.Name(), bad.ID, warnings.String())
+		}
+	}
+}
+
+func runSh(t *testing.T, dir, script string) string {
+	t.Helper()
+	cmd := exec.Command("sh", "-c", script)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("%s: %v", script, err)
+	}
+	return string(out)
 }

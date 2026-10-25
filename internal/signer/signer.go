@@ -52,6 +52,9 @@ func FromEnv(ctx context.Context, repo *gitx.Repo) (Signer, error) {
 	}
 	kind := os.Getenv("PROVE_SIGNER")
 	if kind != "" && kind != "ssh" {
+		if !config.ValidName(kind) {
+			return nil, fmt.Errorf("PROVE_SIGNER=%q must be ssh or an adapter name (letters, digits, '.', '_' or '-')", kind)
+		}
 		return &External{Name: kind, identity: identity, ctx: ctx}, nil
 	}
 	if p := os.Getenv("PROVE_SSH_KEY"); p != "" {
