@@ -43,6 +43,9 @@ type memStore struct {
 	corrupt bool
 	// lossy forgets the finishedAt of every record.
 	lossy bool
+	// misfilter matches a tree query against the commit, so it drops
+	// records verify asks for.
+	misfilter bool
 
 	records map[string][]byte
 	metas   []store.Meta
@@ -99,6 +102,9 @@ func (m *memStore) Get(_ context.Context, id string) ([]byte, error) {
 
 func (m *memStore) List(_ context.Context, q store.Query) ([]store.Meta, error) {
 	var out []store.Meta
+	if m.misfilter && q.Tree != "" {
+		q.Commit, q.Tree = q.Tree, ""
+	}
 	for _, meta := range m.metas {
 		if q.Match(meta) {
 			out = append(out, meta)
@@ -122,10 +128,11 @@ func TestSuiteCatchesBrokenStores(t *testing.T) {
 		t.Fatalf("a sound store failed: %v", f)
 	}
 	for name, newStore := range map[string]func() *memStore{
-		"overwrites a rerun": func() *memStore { return &memStore{byCheck: true} },
-		"lists duplicates":   func() *memStore { return &memStore{dupes: true} },
-		"corrupts records":   func() *memStore { return &memStore{corrupt: true} },
-		"changes meta":       func() *memStore { return &memStore{lossy: true} },
+		"overwrites a rerun":  func() *memStore { return &memStore{byCheck: true} },
+		"lists duplicates":    func() *memStore { return &memStore{dupes: true} },
+		"corrupts records":    func() *memStore { return &memStore{corrupt: true} },
+		"changes meta":        func() *memStore { return &memStore{lossy: true} },
+		"drops query matches": func() *memStore { return &memStore{misfilter: true} },
 	} {
 		if f := failures(newStore); len(f) == 0 {
 			t.Errorf("a store that %s passed the suite", name)

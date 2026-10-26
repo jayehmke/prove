@@ -49,6 +49,7 @@ var cases = []testCase{
 	{"get of a missing record fails", getMissing},
 	{"a second put of the same record succeeds and keeps one record", putTwice},
 	{"a rerun of the same check by the same signer keeps both records", rerunKeepsBoth},
+	{"list with a query returns every matching record", listQuery},
 }
 
 // sample makes a record and its meta. body is part of the record bytes, so
@@ -153,16 +154,58 @@ func rerunKeepsBoth(ctx context.Context, s store.Store) error {
 	return wantList(ctx, s, first, second)
 }
 
+// listQuery lists with each query field prove uses. verify asks for a
+// tree and for a check, so a store that narrows a query must never drop a
+// matching record. (Returning extra records is allowed: prove filters the
+// answer again.)
+func listQuery(ctx context.Context, s store.Store) error {
+	a, aData := sample("unit", "c1", "alice@example.com", "a")
+	b, bData := sample("lint", "c1", "bob@example.com", "b")
+	c, cData := sample("unit", "c2", "bob@example.com", "c")
+	c.Tree = a.Tree // c2 has the same tree as c1, as after a revert
+	for _, r := range []struct {
+		m    store.Meta
+		data []byte
+	}{{a, aData}, {b, bData}, {c, cData}} {
+		if err := s.Put(ctx, r.m, r.data); err != nil {
+			return fmt.Errorf("put: %v", err)
+		}
+	}
+	for _, tc := range []struct {
+		q    store.Query
+		want []store.Meta
+	}{
+		{store.Query{Check: "unit"}, []store.Meta{a, c}},
+		{store.Query{Commit: "c1"}, []store.Meta{a, b}},
+		{store.Query{Tree: a.Tree}, []store.Meta{a, b, c}},
+		{store.Query{Signer: "bob@example.com"}, []store.Meta{b, c}},
+		{store.Query{Fingerprint: c.Fingerprint}, []store.Meta{c}},
+		{store.Query{Check: "unit", Commit: "c2"}, []store.Meta{c}},
+		{store.Query{Check: "release"}, nil},
+	} {
+		if err := wantQuery(ctx, s, tc.q, tc.want...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // wantList checks that list returns exactly want, each meta unchanged.
 func wantList(ctx context.Context, s store.Store, want ...store.Meta) error {
-	got, err := s.List(ctx, store.Query{})
+	return wantQuery(ctx, s, store.Query{}, want...)
+}
+
+// wantQuery checks that list with q returns exactly want, each meta
+// unchanged.
+func wantQuery(ctx context.Context, s store.Store, q store.Query, want ...store.Meta) error {
+	got, err := s.List(ctx, q)
 	if err != nil {
-		return fmt.Errorf("list: %v", err)
+		return fmt.Errorf("list %+v: %v", q, err)
 	}
 	sort.Slice(got, func(i, j int) bool { return got[i].ID < got[j].ID })
 	sort.Slice(want, func(i, j int) bool { return want[i].ID < want[j].ID })
 	if len(got) != len(want) {
-		return fmt.Errorf("list returned %d records, want %d: %+v", len(got), len(want), got)
+		return fmt.Errorf("list %+v returned %d records, want %d: %+v", q, len(got), len(want), got)
 	}
 	for i := range want {
 		if !got[i].FinishedAt.Equal(want[i].FinishedAt) {

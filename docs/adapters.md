@@ -154,10 +154,13 @@ the storage calls change.
 ## Testing a store: the conformance suite
 
 [`storetest`](../storetest/storetest.go) drives a store adapter over this
-protocol exactly as prove does, and fails on anything prove would trip on:
-bytes that don't round-trip, meta that changes, a repeated put that fails
-or lists twice, a missing record that doesn't fail, and a rerun that
-replaces an earlier record of the same check. Run it from a Go test,
+protocol exactly as prove does. It fails a store whose bytes don't
+round-trip, whose meta changes, whose repeated put fails or lists twice,
+whose get of a missing record doesn't fail, whose rerun replaces an
+earlier record of the same check, or whose list with a query (by check,
+commit, tree, signer or fingerprint) drops a matching record. A store may
+ignore the query and return everything, since prove filters the answer
+again. Run it from a Go test,
 whatever language the adapter is in:
 
 ```go
