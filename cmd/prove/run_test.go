@@ -107,9 +107,12 @@ func TestRunRefusesDirtyTree(t *testing.T) {
 }
 
 func TestRunRefusesTreeChangedByCheck(t *testing.T) {
-	for _, tc := range []struct{ name, run, path string }{
-		{"edits a tracked file", "echo patched > README.md", "README.md"},
-		{"adds an untracked file", "echo gen > generated.go", "generated.go"},
+	for _, tc := range []struct{ name, run, want string }{
+		{"edits a tracked file", "echo patched > README.md", "changed the working tree (README.md)"},
+		{"adds an untracked file", "echo gen > generated.go", "changed the working tree (generated.go)"},
+		// The tree is clean afterwards, but the command tested other code.
+		{"commits a change", "echo good > README.md && git commit -qam fix", "moved HEAD"},
+		{"checks out another commit", "git checkout -q HEAD~1", "moved HEAD"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo, _ := setup(t, `
@@ -124,8 +127,8 @@ checks:
 			if code == 0 {
 				t.Fatal("a run that changed the tree exited 0")
 			}
-			if !strings.Contains(errOut, "changed the working tree") || !strings.Contains(errOut, tc.path) {
-				t.Fatalf("stderr should say the check changed %s:\n%s", tc.path, errOut)
+			if !strings.Contains(errOut, tc.want) {
+				t.Fatalf("stderr should say %q:\n%s", tc.want, errOut)
 			}
 			if recs := records(t, repo, head); len(recs) != 0 {
 				t.Fatalf("a run that changed the tree stored %d records", len(recs))

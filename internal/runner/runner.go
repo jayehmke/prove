@@ -60,6 +60,13 @@ func CheckClean(ctx context.Context, repo *gitx.Repo) error {
 	return fmt.Errorf("%w (%s): commit them first, because a record describes committed code", ErrDirty, summarize(dirty))
 }
 
+func short(s string) string {
+	if len(s) > 7 {
+		return s[:7]
+	}
+	return s
+}
+
 // summarize lists up to five paths.
 func summarize(paths []string) string {
 	shown := paths
@@ -116,7 +123,14 @@ func Run(ctx context.Context, o Options) (*Outcome, error) {
 	}
 	finished := time.Now().UTC()
 	// The record claims the committed tree passed, so the command must have
-	// run on exactly that tree.
+	// run on exactly that tree: HEAD unmoved and nothing changed.
+	if after, err := o.Repo.ResolveCommit(ctx, "HEAD"); err != nil || after != commit {
+		moved := "nowhere"
+		if err == nil {
+			moved = short(after)
+		}
+		return nil, fmt.Errorf("the check moved HEAD (%s -> %s), so it did not test the committed code: no record stored. A check must not commit, check out or reset", short(commit), moved)
+	}
 	if dirty, err := o.Repo.DirtyPaths(ctx); err != nil {
 		return nil, err
 	} else if len(dirty) > 0 {

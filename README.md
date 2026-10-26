@@ -59,8 +59,9 @@ branch's policy.
 
 A check must leave the working tree as it found it. If the command edits
 tracked files or writes files git doesn't ignore (`--fix`, `gofmt -w`,
-codegen), `prove run` stores nothing and names the changed paths, because
-the command did not test the committed code.
+codegen), or moves HEAD (commits, checks out, resets), `prove run` stores
+nothing and says what changed, because the command did not test the
+committed code.
 
 ## Quick start
 
