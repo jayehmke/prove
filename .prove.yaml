@@ -1,0 +1,16 @@
+# prove's own policy. Add signers before relying on it in CI: with no
+# signers, verify trusts only the key of the machine it runs on.
+version: 1
+checks:
+  - name: vet
+    run: go vet ./...
+    inputs: ["**/*.go", go.mod]
+    lockfiles: [go.sum]
+  - name: test
+    run: go test -race ./...
+    inputs: ["**/*.go", go.mod, "**/testdata/**"]
+    lockfiles: [go.sum]
+  - name: lint
+    run: golangci-lint run ./...
+    inputs: ["**/*.go", go.mod, .golangci.yml]
+    lockfiles: [go.sum]

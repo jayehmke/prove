@@ -1,0 +1,9 @@
+version: "2"
+linters:
+  settings:
+    errcheck:
+      # Writes to stdout/stderr and hashes: nothing useful to do on error.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
