@@ -65,59 +65,71 @@ committed code.
 
 ## Quick start
 
+Install prove: download a binary for linux or macOS from
+[Releases](https://github.com/jayehmke/prove/releases) (check it against
+`checksums.txt`), or build it with Go:
+
 ```console
 $ go install github.com/jayehmke/prove/cmd/prove@latest
-$ cd your-repo
-$ prove run --name unit -- go test ./...
-$ prove verify
 ```
+
+prove signs with your SSH key: git's signing key when `gpg.format=ssh`,
+else `~/.ssh/id_ed25519` (see [Signing](#signing)). Then, in any git
+repository with everything committed, record a check and verify it. No
+config is needed:
+
+```sh quickstart
+prove run --name unit -- go test ./...
+prove verify
+```
+
+Use your own test command after `--`. `prove verify` prints `PASS` and
+exits 0. Commit a change and it fails until you run the check again,
+unless you narrow the check's inputs (see below).
 
 With no `.prove.yaml`, `prove verify` checks every check recorded for this
 tree against its own command, and trusts only this machine's key. That is
 for one person on one machine; a team writes a policy.
 
-Build a static binary with `CGO_ENABLED=0 go build ./cmd/prove`.
-
 ## .prove.yaml
 
 ```yaml
 version: 1
-
 checks:
   - name: unit
     run: go test -race ./...
     inputs: ["**/*.go", "go.mod"]   # default: "**", the whole repo
     lockfiles: [go.sum]
-    junit: out/junit.xml             # optional per-test results (keep it git-ignored)
-    signers: [ci, alice]             # optional: who may sign this check
   - name: lint
     run: golangci-lint run
-
-# Trusted signers: identity -> public key. A string is an SSH public key.
 signers:
   alice: ssh-ed25519 AAAAC3Nza... alice@example.com
   ci: ssh-ed25519 AAAAC3Nza... ci
-  # kms: {type: kms, key: "<key id>"}   # verified by prove-signer-kms
-
-# Requirement IDs come from test names in the JUnit reports.
-requirements:
-  pattern: 'AC-\d+-\d+'
-  required: [AC-12-1, AC-12-2]
-
-store: git      # git (default), local, or an adapter name; see below
-sample: 0       # percent of checks `prove verify` reruns by default
 ```
 
-Globs match repository paths. `**` matches any number of folders; a pattern
-without a `/` (like `*.go`) matches at any depth, as in `.gitignore`; a
-leading `/` anchors it at the root.
+`prove run` with no arguments runs every check. Every field, per-test
+detail from JUnit reports, requirement IDs, `--sample` reruns and
+per-check signers are in [docs/policy.md](docs/policy.md).
 
-### Per-test detail
+## In CI
 
-Set `junit:` to the JUnit XML file the command writes: go (gotestsum), jest,
-pytest, Playwright, golangci-lint, ESLint, ruff and swift can all write one.
-The record lists each test's result and the requirement IDs `pattern` finds
-in its name. Each `required` ID needs at least one passing test.
+The [GitHub action](action/action.yml) runs `prove verify` and posts
+`prove show --format md` as the job summary, pass or fail. The job fails
+when verify fails.
+
+```yaml
+- uses: actions/checkout@v4
+- uses: jayehmke/prove/action@v0.1.0 # a release tag
+  with:
+    args: --sample 10                # optional
+```
+
+It fetches `refs/prove/*` from origin first, so records pushed with the
+git store are found, and it verifies the pull request's head commit. It
+installs the latest release unless you pin `version:`. Ubuntu runners have
+Perl's unrelated `prove` on `PATH`; the action installs its own in front.
+Any other CI runs the same two commands: `prove verify`, then
+`prove show --format md`.
 
 ## Signing
 
@@ -139,6 +151,8 @@ git commit signatures.
   `git push origin 'refs/prove/*:refs/prove/*'` and
   `git fetch origin 'refs/prove/*:refs/prove/*'`.
 - **local** keeps records in a folder (`path:`; default `.git/prove/records`).
+- **s3** keeps records in an S3 bucket with `prove-store-s3`, released with
+  prove. It never overwrites an object.
 - Anything else is a `prove-store-<name>` adapter. See
   [docs/adapters.md](docs/adapters.md).
 
@@ -146,6 +160,10 @@ git commit signatures.
 
 `0` everything passed, `1` a check or verification failed, `2` a usage or
 setup error (a dirty tree, no key, a bad `.prove.yaml`).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Contributions need a signed CLA.
 
 ## License
 

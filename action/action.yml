@@ -1,0 +1,40 @@
+name: prove verify
+description: Verify the prove records of a commit, and post what is recorded as the job summary.
+author: jayehmke
+branding:
+  icon: check-circle
+  color: green
+
+inputs:
+  commit:
+    description: The commit to verify. Default the pull request's head, else the pushed commit.
+    default: ${{ github.event.pull_request.head.sha || github.sha }}
+  args:
+    description: More arguments for prove verify, such as --sample 10.
+    default: ""
+  version:
+    description: The prove release to install, such as 1.2.0. Empty uses prove from PATH, or else the latest release.
+    default: ""
+  fetch-records:
+    description: Fetch refs/prove/* from origin first (where the git store keeps records).
+    default: "true"
+  working-directory:
+    description: The repository to verify.
+    default: "."
+
+runs:
+  using: composite
+  steps:
+    - name: Install prove
+      shell: bash
+      env:
+        PROVE_VERSION: ${{ inputs.version }}
+      run: '"$GITHUB_ACTION_PATH/install.sh"'
+    - name: prove verify
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PROVE_COMMIT: ${{ inputs.commit }}
+        PROVE_ARGS: ${{ inputs.args }}
+        PROVE_FETCH_RECORDS: ${{ inputs.fetch-records }}
+      run: '"$GITHUB_ACTION_PATH/verify.sh"'

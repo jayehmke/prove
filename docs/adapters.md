@@ -2,7 +2,8 @@
 
 Storage and signing are adapters. prove has three built in: the `local` and
 `git` stores and the `ssh` signer. Anything else is an external program on
-`PATH`, in the style of git credential helpers:
+`PATH`, in the style of git credential helpers. prove's releases include
+one, [`prove-store-s3`](#s3).
 
 | Kind   | Program name           | Picked by                                 |
 |--------|------------------------|-------------------------------------------|
@@ -149,3 +150,61 @@ $ echo '{"op":"list","config":{"dir":"/srv/prove-records"},"query":{}}' | prove-
 
 A real store (S3, GCS, an HTTP service) has the same three operations; only
 the storage calls change.
+
+## Testing a store: the conformance suite
+
+[`storetest`](../storetest/storetest.go) drives a store adapter over this
+protocol exactly as prove does, and fails on anything prove would trip on:
+bytes that don't round-trip, meta that changes, a repeated put that fails
+or lists twice, a missing record that doesn't fail, and a rerun that
+replaces an earlier record of the same check. Run it from a Go test,
+whatever language the adapter is in:
+
+```go
+import "github.com/jayehmke/prove/storetest"
+
+func TestMyStore(t *testing.T) {
+	// prove-store-mine must be on PATH.
+	storetest.Run(t, "mine", func(t *testing.T) map[string]any {
+		return map[string]any{"dir": t.TempDir()} // options for an empty store
+	})
+}
+```
+
+Every case gets a fresh, empty store from the function you pass.
+`prove-store-dir` above and `prove-store-s3` both pass it.
+
+## S3
+
+`prove-store-s3` keeps records in an S3 bucket, or any S3-compatible
+server. Install it from a release (it is in the same archive as `prove`)
+or with
+`go install github.com/jayehmke/prove/cmd/prove-store-s3@latest`.
+
+```yaml
+store:
+  type: s3
+  options:
+    bucket: my-prove-records   # required
+    prefix: prove              # default "prove"
+    region: us-east-1          # default: from the AWS environment
+    # endpoint: https://minio.example.com   # an S3-compatible server
+    # path_style: true                       # most of those need it
+```
+
+Each record is `<prefix>/<commit>/<signer>/<check>.json`, the record bytes
+exactly as signed, and `<prefix>/index/<id>.json` points to it with its
+meta. Every write is conditional (`If-None-Match: *`), so the adapter never
+replaces an object: a rerun of the same check by the same signer on the
+same commit goes to `<check>.2.json`, then `<check>.3.json`. Turn on
+versioning on the bucket too, so nothing else can destroy a record either.
+
+Credentials come from the standard AWS chain: environment variables,
+shared config and SSO profiles, web identity (OIDC from CI), and instance
+or task roles. The adapter needs `s3:PutObject`, `s3:GetObject` and
+`s3:ListBucket` on the bucket and prefix, and nothing else. For GitHub
+Actions, give a role with that policy to the workflow through OIDC
+(`aws-actions/configure-aws-credentials`) instead of storing a key.
+
+`list` reads every index entry, so it costs one request per record plus
+one per thousand records; keep one prefix per repository.
