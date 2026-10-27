@@ -1,0 +1,38 @@
+# Releases: a v* tag builds static prove and prove-store-s3 binaries for
+# linux and darwin on amd64 and arm64, one archive per platform, and
+# checksums.txt. action/install.sh downloads these archive names.
+version: 2
+project_name: prove
+
+builds:
+  - &build
+    id: prove
+    main: ./cmd/prove
+    binary: prove
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X github.com/jayehmke/prove/internal/runner.Version={{ .Version }}
+  - <<: *build
+    id: prove-store-s3
+    main: ./cmd/prove-store-s3
+    binary: prove-store-s3
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    files: [LICENSE, README.md]
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  use: github
+
+release:
+  github:
+    owner: jayehmke
+    name: prove
