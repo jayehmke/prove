@@ -34,6 +34,9 @@ Usage:
       --stale             run only checks with no valid, current, trusted record
       --commit <rev>      run on that commit in a temporary worktree, so
                           uncommitted changes neither block nor leak in
+      --checkout-policy   with --commit: take the checks, signers and store
+                          from this checkout's .prove.yaml (the one prove
+                          verify reads here), not the commit's
   prove run --name <n> [flags] -- <cmd>  run one command with no config
       --input <glob>      an input file glob (repeatable; default: the whole repo)
       --lockfile <glob>   a lockfile glob (repeatable)
@@ -236,6 +239,7 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (int, 
 	junit := fs.String("junit", "", "")
 	stale := fs.Bool("stale", false, "")
 	rev := fs.String("commit", "", "")
+	here := fs.Bool("checkout-policy", false, "")
 	var inputs, lockfiles multi
 	fs.Var(&inputs, "input", "")
 	fs.Var(&lockfiles, "lockfile", "")
@@ -247,6 +251,9 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (int, 
 	if adHoc && *stale {
 		return 0, usageError{"--stale runs checks from " + config.FileName + ", not an ad-hoc command"}
 	}
+	if *here && *rev == "" {
+		return 0, usageError{"--checkout-policy goes with --commit: without it, the checkout's policy is used anyway"}
+	}
 	e, err := load(ctx)
 	if err != nil {
 		return 0, err
@@ -257,6 +264,11 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (int, 
 			return 0, err
 		}
 		defer cleanup()
+		if *here {
+			// Run the checks as prove verify here will judge them, so
+			// --stale and the records it makes agree with that verify.
+			at.policy, at.store = e.policy, e.store
+		}
 		e = at
 	} else if err := runner.CheckClean(ctx, e.repo); err != nil {
 		// Refuse a dirty tree before anything else, so nothing is run or stored.

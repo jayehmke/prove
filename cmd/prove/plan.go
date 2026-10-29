@@ -172,7 +172,14 @@ func cmdPush(ctx context.Context, args []string, stdout, stderr io.Writer) (int,
 	if err != nil {
 		return 0, err
 	}
-	ids, err := pushIDs(ctx, e, commit, stderr)
+	// Plan with the commit's own policy, as prove run --commit does, so the
+	// records the run reused are the ones pushed even when another branch
+	// is checked out.
+	policy, err := policyAt(ctx, e.repo, commit)
+	if err != nil {
+		return 0, err
+	}
+	ids, err := pushIDs(ctx, &env{repo: e.repo, policy: policy, store: e.store}, commit, stderr)
 	if err != nil {
 		return 0, err
 	}
@@ -229,6 +236,23 @@ func pushIDs(ctx context.Context, e *env, commit string, stderr io.Writer) ([]st
 		}
 	}
 	return ids, nil
+}
+
+// policyAt reads the policy committed in commit, or nil when it has none.
+func policyAt(ctx context.Context, repo *gitx.Repo, commit string) (*config.Config, error) {
+	path := commit + ":" + config.FileName
+	if _, err := repo.Git(ctx, "cat-file", "-e", path); err != nil {
+		return nil, nil
+	}
+	data, err := repo.GitInput(ctx, nil, "cat-file", "blob", path)
+	if err != nil {
+		return nil, err
+	}
+	p, err := config.Parse(data)
+	if err != nil {
+		return nil, fmt.Errorf("%s in %s: %w", config.FileName, short(commit), err)
+	}
+	return p, nil
 }
 
 func gitPush(ctx context.Context, repo *gitx.Repo, remote string, refspecs []string, stdout, stderr io.Writer) error {

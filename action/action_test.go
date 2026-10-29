@@ -179,6 +179,46 @@ func TestActionRunModeRunsMissingRecords(t *testing.T) {
 	}
 }
 
+func TestActionRunModeUsesTheCheckoutsPolicy(t *testing.T) {
+	// On a pull request the checkout is the merge commit, whose policy can
+	// differ from the head's: here the base changed a check's command after
+	// the head was recorded. Run mode must rerun that check under the
+	// checkout's policy, the one verify then applies, not skip it and go red.
+	script, err := filepath.Abs("verify.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := testutil.NewRepo(t)
+	key := testutil.NewKey(t, "ci@example.com")
+	env := []string{"PATH=" + filepath.Dir(proveBin) + string(os.PathListSeparator) + os.Getenv("PATH"), "PROVE_SSH_KEY=" + key.Path}
+	testutil.WriteFile(t, repo, ".prove.yaml", strings.ReplaceAll(policyHead, "$KEY", key.Public))
+	head := testutil.Commit(t, repo, "policy")
+	if code, out := sh(t, repo.Dir, env, proveBin, "run"); code != 0 {
+		t.Fatalf("prove run: %s", out)
+	}
+	testutil.WriteFile(t, repo, ".prove.yaml", strings.ReplaceAll(strings.Replace(policyHead, `run: "true"`, `run: "echo strict"`, 1), "$KEY", key.Public))
+	testutil.Commit(t, repo, "base changes the build command")
+
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	testutil.Git(t, repo.Dir, "init", "-q", "--bare", origin)
+	testutil.Git(t, repo.Dir, "push", "-q", origin, "HEAD:refs/heads/main", "refs/prove/*:refs/prove/*")
+	for _, mode := range []string{"verify", "run"} {
+		t.Run(mode, func(t *testing.T) {
+			clone := filepath.Join(t.TempDir(), "clone")
+			testutil.Git(t, repo.Dir, "clone", "-q", "file://"+origin, clone)
+			code, out := sh(t, clone, append(env, "PROVE_MODE="+mode, "PROVE_COMMIT="+head,
+				"GITHUB_STEP_SUMMARY="+filepath.Join(t.TempDir(), "summary.md")), "bash", script)
+			want := map[string]int{"verify": 1, "run": 0}[mode]
+			if code != want {
+				t.Fatalf("verify.sh in %s mode exited %d, want %d:\n%s", mode, code, want, out)
+			}
+			if mode == "run" && !strings.Contains(out, "build is stale (command differs") {
+				t.Fatalf("run mode should rerun build under the checkout's command:\n%s", out)
+			}
+		})
+	}
+}
+
 func TestActionRunsItsScripts(t *testing.T) {
 	raw, err := os.ReadFile("action.yml")
 	if err != nil {

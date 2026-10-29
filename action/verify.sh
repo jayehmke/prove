@@ -25,7 +25,8 @@ verify) ;;
 run)
   prove plan "$commit"
   # A failing check is recorded as failed and verify reports it below.
-  prove run --stale --commit "$commit"
+  # --checkout-policy: plan, run and verify all use this checkout's policy.
+  prove run --stale --commit "$commit" --checkout-policy
   if [ $? -eq 2 ]; then exit 2; fi
   ;;
 *)

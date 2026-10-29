@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jayehmke/prove/internal/config"
 	"github.com/jayehmke/prove/internal/gitx"
 	"github.com/jayehmke/prove/internal/store"
 	"github.com/jayehmke/prove/internal/testutil"
@@ -79,6 +80,45 @@ checks:
 		}
 		if refs := testutil.Git(t, remote, "for-each-ref", "refs/heads/"); refs != "" {
 			t.Fatalf("the branch was pushed anyway:\n%s", refs)
+		}
+	})
+
+	t.Run("pushing a branch that is not checked out pushes the records its commit reuses", func(t *testing.T) {
+		// The base branch checks the whole repository; feature narrows lint to a.txt,
+		// records lint, then changes only b.txt, so its tip reuses that
+		// record under feature's policy, not main's.
+		repo, remote, push := install(t, `
+signers:
+  tester: $TESTER
+checks:
+  - name: lint
+    run: "true"
+`)
+		base := strings.TrimSpace(testutil.Git(t, repo.Dir, "rev-parse", "--abbrev-ref", "HEAD"))
+		testutil.Git(t, repo.Dir, "checkout", "-q", "-b", "feature")
+		testutil.WriteFile(t, repo, config.FileName, strings.Replace(
+			testutil.Git(t, repo.Dir, "show", "HEAD:"+config.FileName), `run: "true"`, "run: \"true\"\n    inputs: [a.txt]", 1)+"\n")
+		testutil.WriteFile(t, repo, "a.txt", "a\n")
+		testutil.Commit(t, repo, "narrow lint")
+		if code, _, errOut := prove(t, "run"); code != 0 {
+			t.Fatalf("prove run: %s", errOut)
+		}
+		testutil.WriteFile(t, repo, "b.txt", "b\n")
+		testutil.Commit(t, repo, "not a lint input")
+		testutil.Git(t, repo.Dir, "checkout", "-q", base)
+
+		if out, err := push("feature"); err != nil {
+			t.Fatalf("git push: %v\n%s", err, out)
+		}
+		if refs := testutil.Git(t, remote, "for-each-ref", store.RefPrefix); len(strings.Fields(refs)) != 3 {
+			t.Fatalf("want the reused record on the remote, got:\n%s", refs)
+		}
+		clone := filepath.Join(t.TempDir(), "clone")
+		testutil.Git(t, repo.Dir, "clone", "-q", "-b", "feature", remote, clone)
+		testutil.Git(t, clone, "fetch", "-q", "origin", "refs/prove/*:refs/prove/*")
+		t.Chdir(clone)
+		if code, out, _ := prove(t, "verify"); code != 0 {
+			t.Fatalf("the pushed branch does not verify from the remote:\n%s", out)
 		}
 	})
 }

@@ -107,9 +107,12 @@ records of each commit it pushes; a failing check fails the push.
 - `prove run --commit <rev>` runs on that commit in a temporary worktree,
   so uncommitted changes neither block the run nor leak into it. Ignored
   files (`node_modules`, build caches) are not in that worktree; when the
-  commit is the clean HEAD, it runs in place instead.
+  commit is the clean HEAD, it runs in place instead. The checks are the
+  commit's own; `--checkout-policy` takes them from the checkout's
+  `.prove.yaml` instead, the one `prove verify` reads there.
 - `prove push [remote]` pushes the records a verifier of the commit needs:
-  every record made for it, and older records it reuses. It sets
+  every record made for it, and older records it reuses under the commit's
+  own policy (so `--commit` works from any branch). It sets
   `PROVE_PUSHING=1` for its own `git push`, so a hook can skip it.
   `--as-branch <prefix>` pushes each record as
   `refs/heads/<prefix>-prove-<id>`, for hosts that accept only branch
@@ -156,7 +159,8 @@ git store are found, and it verifies the pull request's head commit.
 
 With `mode: run`, a check with no valid record costs a CI run instead of a
 red job: the action prints `prove plan`, runs `prove run --stale` on the
-commit, then verifies. The job fails only when a check itself fails. It
+commit, then verifies, all three with the checkout's policy (`prove run
+--checkout-policy`). The job fails only when a check itself fails. It
 signs with the job's key (`PROVE_SSH_KEY` from a secret), which the policy
 must trust.
 
@@ -166,8 +170,9 @@ must trust.
     mode: run
   env:
     PROVE_SSH_KEY: ${{ runner.temp }}/prove_key   # written from a secret
-``` It
-installs the latest release unless you pin `version:`. Ubuntu runners have
+```
+
+It installs the latest release unless you pin `version:`. Ubuntu runners have
 Perl's unrelated `prove` on `PATH`; the action installs its own in front.
 Any other CI runs the same two commands: `prove verify`, then
 `prove show --format md`.
