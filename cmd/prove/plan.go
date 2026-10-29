@@ -92,6 +92,7 @@ func makePlan(ctx context.Context, e *env, commit string, stderr io.Writer) (*Pl
 func cmdPlan(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
 	fs := flag.NewFlagSet("plan", flag.ContinueOnError)
 	format := fs.String("format", "text", "")
+	onto := fs.String("onto", "", "")
 	pos, rest, err := parse(fs, args)
 	if err != nil {
 		return 0, err
@@ -111,6 +112,9 @@ func cmdPlan(ctx context.Context, args []string, stdout, stderr io.Writer) (int,
 	}
 	e, err := load(ctx)
 	if err != nil {
+		return 0, err
+	}
+	if commit, err = target(ctx, e.repo, commit, *onto, stderr); err != nil {
 		return 0, err
 	}
 	p, err := makePlan(ctx, e, commit, stderr)
@@ -150,12 +154,13 @@ func cmdPush(ctx context.Context, args []string, stdout, stderr io.Writer) (int,
 	fs := flag.NewFlagSet("push", flag.ContinueOnError)
 	rev := fs.String("commit", "HEAD", "")
 	prefix := fs.String("as-branch", "", "")
+	onto := fs.String("onto", "", "")
 	pos, rest, err := parse(fs, args)
 	if err != nil {
 		return 0, err
 	}
 	if rest != nil || len(pos) > 1 {
-		return 0, usageError{"push is: prove push [remote] [--commit <rev>] [--as-branch <prefix>]"}
+		return 0, usageError{"push is: prove push [remote] [--commit <rev>] [--as-branch <prefix>] [--onto <ref>]"}
 	}
 	remote := "origin"
 	if len(pos) == 1 {
@@ -168,7 +173,7 @@ func cmdPush(ctx context.Context, args []string, stdout, stderr io.Writer) (int,
 	if _, ok := e.store.(*store.Git); !ok {
 		return 0, fmt.Errorf("prove push shares records kept in the git store; this repository uses the %s", e.store.Name())
 	}
-	commit, err := e.repo.ResolveCommit(ctx, *rev)
+	commit, err := target(ctx, e.repo, *rev, *onto, stderr)
 	if err != nil {
 		return 0, err
 	}

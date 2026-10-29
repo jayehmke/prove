@@ -131,6 +131,50 @@ func (r *Repo) Checkout(ctx context.Context, commit string) (dir string, cleanup
 	}, nil
 }
 
+// MergeOnto returns the commit that merging commit into onto makes: commit
+// itself when it already contains onto, otherwise a merge commit with
+// parents onto and commit. The merge commit is made with a fixed identity
+// and date, so the same pair always gives the same commit, and it touches
+// no ref, HEAD, index or working tree. A conflict is an error.
+func (r *Repo) MergeOnto(ctx context.Context, commit, onto string) (string, error) {
+	commit, err := r.ResolveCommit(ctx, commit)
+	if err != nil {
+		return "", err
+	}
+	base, err := r.ResolveCommit(ctx, onto)
+	if err != nil {
+		return "", err
+	}
+	if _, err := r.Git(ctx, "merge-base", "--is-ancestor", base, commit); err == nil {
+		return commit, nil
+	}
+	out, err := r.Git(ctx, "merge-tree", "--write-tree", "--no-messages", base, commit)
+	if err != nil {
+		return "", fmt.Errorf("%s does not merge cleanly onto %s: %w", short(commit), onto, err)
+	}
+	tree, _, _ := strings.Cut(out, "\n")
+	cmd := exec.CommandContext(ctx, "git", "commit-tree", "--no-gpg-sign", tree, "-p", base, "-p", commit,
+		"-m", "prove: "+commit+" merged onto "+base)
+	cmd.Dir = r.Dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=prove", "GIT_AUTHOR_EMAIL=prove@localhost", "GIT_AUTHOR_DATE=@0 +0000",
+		"GIT_COMMITTER_NAME=prove", "GIT_COMMITTER_EMAIL=prove@localhost", "GIT_COMMITTER_DATE=@0 +0000")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	merged, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git commit-tree: %v: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return strings.TrimSpace(string(merged)), nil
+}
+
+func short(s string) string {
+	if len(s) > 7 {
+		return s[:7]
+	}
+	return s
+}
+
 // Entry is one file in a tree.
 type Entry struct {
 	Mode string

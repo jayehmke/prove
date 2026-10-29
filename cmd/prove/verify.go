@@ -13,7 +13,7 @@ import (
 )
 
 // report runs verify for the commit named in pos (default HEAD).
-func report(ctx context.Context, pos []string, sample float64, stdout, stderr io.Writer) (*verify.Report, error) {
+func report(ctx context.Context, pos []string, onto string, sample float64, stdout, stderr io.Writer) (*verify.Report, error) {
 	if len(pos) > 1 {
 		return nil, usageError{"give at most one commit"}
 	}
@@ -29,6 +29,9 @@ func report(ctx context.Context, pos []string, sample float64, stdout, stderr io
 	if len(pos) == 1 {
 		commit = pos[0]
 	}
+	if commit, err = target(ctx, e.repo, commit, onto, stderr); err != nil {
+		return nil, err
+	}
 	if sample < 0 && e.policy != nil {
 		sample = e.policy.Sample
 	}
@@ -42,6 +45,7 @@ func cmdVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (in
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
 	sample := fs.String("sample", "", "")
 	format := fs.String("format", "text", "")
+	onto := fs.String("onto", "", "")
 	pos, rest, err := parse(fs, args)
 	if err != nil {
 		return 0, err
@@ -59,7 +63,7 @@ func cmdVerify(ctx context.Context, args []string, stdout, stderr io.Writer) (in
 			return 0, usageError{fmt.Sprintf("--sample %q: want a percent from 0 to 100", *sample)}
 		}
 	}
-	rep, err := report(ctx, pos, pct, stderr, stderr)
+	rep, err := report(ctx, pos, *onto, pct, stderr, stderr)
 	if err != nil {
 		return 0, err
 	}

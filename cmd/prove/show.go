@@ -13,6 +13,7 @@ import (
 func cmdShow(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
 	fs := flag.NewFlagSet("show", flag.ContinueOnError)
 	format := fs.String("format", "md", "")
+	onto := fs.String("onto", "", "")
 	pos, rest, err := parse(fs, args)
 	if err != nil {
 		return 0, err
@@ -23,7 +24,7 @@ func cmdShow(ctx context.Context, args []string, stdout, stderr io.Writer) (int,
 	if *format != "md" && *format != "json" {
 		return 0, usageError{fmt.Sprintf("unknown format %q: use md or json", *format)}
 	}
-	rep, err := report(ctx, pos, 0, stderr, stderr)
+	rep, err := report(ctx, pos, *onto, 0, stderr, stderr)
 	if err != nil {
 		return 0, err
 	}

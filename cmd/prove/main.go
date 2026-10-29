@@ -37,19 +37,24 @@ Usage:
       --checkout-policy   with --commit: take the checks, signers and store
                           from this checkout's .prove.yaml (the one prove
                           verify reads here), not the commit's
+      --onto <ref>        run on the commit (default HEAD) merged into ref,
+                          as a pull request's CI tests it
   prove run --name <n> [flags] -- <cmd>  run one command with no config
       --input <glob>      an input file glob (repeatable; default: the whole repo)
       --lockfile <glob>   a lockfile glob (repeatable)
       --junit <path>      JUnit XML report the command writes
-  prove verify [commit] [--sample <pct>] [--format text|json]
+  prove verify [commit] [--sample <pct>] [--format text|json] [--onto <ref>]
                                          check every policy check of a commit (default HEAD)
-  prove show [commit] [--format md|json] print what is recorded for a commit
-  prove plan [commit] [--format text|json]
+  prove show [commit] [--format md|json] [--onto <ref>]
+                                         print what is recorded for a commit
+  prove plan [commit] [--format text|json] [--onto <ref>]
                                          per check: accept its record, or run it (and why)
-  prove push [remote] [--commit <rev>] [--as-branch <prefix>]
+  prove push [remote] [--commit <rev>] [--as-branch <prefix>] [--onto <ref>]
                                          push the records a verifier of the commit needs
                                          (default origin, HEAD); --as-branch pushes each
                                          as refs/heads/<prefix>-prove-<id>
+      --onto <ref>        judge the commit merged into ref (a pull request
+                          against its base), not the commit alone
   prove version
 
 Signing: PROVE_SSH_KEY (an SSH key file), PROVE_SIGNER (an adapter name),
@@ -164,6 +169,21 @@ func (e *env) at(ctx context.Context, rev string) (*env, func(), error) {
 	return &env{repo: repo, policy: policy, store: st}, cleanup, nil
 }
 
+// target resolves rev, or with onto, the commit that merging rev into onto
+// makes (see gitx.Repo.MergeOnto): what a pull request's CI tests, so a
+// record of the branch alone can't hide a break that comes from the base.
+func target(ctx context.Context, repo *gitx.Repo, rev, onto string, stderr io.Writer) (string, error) {
+	if onto == "" {
+		return repo.ResolveCommit(ctx, rev)
+	}
+	merged, err := repo.MergeOnto(ctx, rev, onto)
+	if err != nil {
+		return "", err
+	}
+	fmt.Fprintf(stderr, "prove: %s merged onto %s is %s\n", rev, onto, short(merged))
+	return merged, nil
+}
+
 // trust is the policy's signers. A policy without signers (or no policy)
 // trusts only this machine's own key, which suits one person on one
 // machine; CI should always list its signers.
@@ -240,6 +260,7 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (int, 
 	stale := fs.Bool("stale", false, "")
 	rev := fs.String("commit", "", "")
 	here := fs.Bool("checkout-policy", false, "")
+	onto := fs.String("onto", "", "")
 	var inputs, lockfiles multi
 	fs.Var(&inputs, "input", "")
 	fs.Var(&lockfiles, "lockfile", "")
@@ -258,8 +279,15 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (int, 
 	if err != nil {
 		return 0, err
 	}
+	if *onto != "" && *rev == "" {
+		*rev = "HEAD"
+	}
 	if *rev != "" {
-		at, cleanup, err := e.at(ctx, *rev)
+		commit, err := target(ctx, e.repo, *rev, *onto, stderr)
+		if err != nil {
+			return 0, err
+		}
+		at, cleanup, err := e.at(ctx, commit)
 		if err != nil {
 			return 0, err
 		}

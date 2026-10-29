@@ -3,6 +3,10 @@
 # branch and pushes the records too, so nobody has to remember to.
 # Install it as .git/hooks/pre-push (or through core.hooksPath). A failing
 # check fails the push.
+#
+# Set PROVE_ONTO to the base branch (say origin/main) to record each commit
+# merged into it, as a pull request's CI tests it: a change on the base that
+# breaks the branch then fails the push instead of master.
 remote="$1"
 
 # prove push's own git push runs this hook again: let it through.
@@ -12,6 +16,6 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   case "$remote_ref" in refs/heads/*) ;; *) continue ;; esac
   case "$local_sha" in *[!0]*) ;; *) continue ;; esac # a branch deletion
   # </dev/null: the checks must not read the ref list on stdin.
-  prove run --stale --commit "$local_sha" </dev/null || exit 1
-  prove push "$remote" --commit "$local_sha" </dev/null || exit 1
+  prove run --stale --commit "$local_sha" ${PROVE_ONTO:+--onto "$PROVE_ONTO"} </dev/null || exit 1
+  prove push "$remote" --commit "$local_sha" ${PROVE_ONTO:+--onto "$PROVE_ONTO"} </dev/null || exit 1
 done

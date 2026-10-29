@@ -7,8 +7,8 @@ branding:
 
 inputs:
   commit:
-    description: The commit to verify. Default the pull request's head, else the pushed commit.
-    default: ${{ github.event.pull_request.head.sha || github.sha }}
+    description: The commit to verify. Default github.sha, which on a pull request is the head merged into the base branch, so records of the head alone can't hide a break the base brings in (inputs the base changed are rerun or fail). Pass the head's sha to verify the branch alone.
+    default: ${{ github.sha }}
   mode:
     description: verify only checks records. run first runs the checks prove plan says have no valid record (signing with this job's key, which the policy must trust), then verifies.
     default: verify
