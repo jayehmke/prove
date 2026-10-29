@@ -121,4 +121,35 @@ checks:
 			t.Fatalf("the pushed branch does not verify from the remote:\n%s", out)
 		}
 	})
+
+	t.Run("with PROVE_ONTO, a branch that breaks merged into the base fails the push", func(t *testing.T) {
+		repo, _ := skewRepo(t)
+		hook, err := os.ReadFile(hookSrc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(repo.Dir, ".git", "hooks", "pre-push"), hook, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		remote := filepath.Join(t.TempDir(), "remote.git")
+		testutil.Git(t, repo.Dir, "init", "-q", "--bare", remote)
+		push := func(onto string) (string, error) {
+			cmd := exec.Command("git", "push", remote, "feature")
+			cmd.Dir = repo.Dir
+			cmd.Env = append(os.Environ(), "PROVE_ONTO="+onto, "PATH="+filepath.Dir(bin)+string(os.PathListSeparator)+os.Getenv("PATH"))
+			out, err := cmd.CombinedOutput()
+			return string(out), err
+		}
+		out, err := push("main")
+		if err == nil || !strings.Contains(out, "TS2305: lib has no exported member toKeepKey") {
+			t.Fatalf("the push should fail on the merge with main: %v\n%s", err, out)
+		}
+		if refs := testutil.Git(t, remote, "for-each-ref", "refs/heads/"); refs != "" {
+			t.Fatalf("the branch was pushed anyway:\n%s", refs)
+		}
+		// Without it, the branch alone passes and goes up.
+		if out, err := push(""); err != nil {
+			t.Fatalf("the branch alone should push: %v\n%s", err, out)
+		}
+	})
 }

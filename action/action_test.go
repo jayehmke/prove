@@ -219,6 +219,66 @@ func TestActionRunModeUsesTheCheckoutsPolicy(t *testing.T) {
 	}
 }
 
+// TestActionCatchesMergeSkew is a pull request whose head passes alone but
+// fails merged into a base that changed the check's inputs since.
+func TestActionCatchesMergeSkew(t *testing.T) {
+	script, err := filepath.Abs("verify.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := testutil.NewRepo(t)
+	key := testutil.NewKey(t, "ci@example.com")
+	env := []string{"PATH=" + filepath.Dir(proveBin) + string(os.PathListSeparator) + os.Getenv("PATH"), "PROVE_SSH_KEY=" + key.Path}
+	testutil.WriteFile(t, repo, ".prove.yaml", strings.ReplaceAll(`version: 1
+signers:
+  ci: $KEY
+checks:
+  - name: web
+    run: grep -qx "export toKeepKey" web/lib.ts || ! grep -q toKeepKey web/app.ts
+    inputs: ["web/**"]
+`, "$KEY", key.Public))
+	testutil.WriteFile(t, repo, "web/lib.ts", "export toKeepKey\n")
+	testutil.WriteFile(t, repo, "web/app.ts", "\n")
+	testutil.Commit(t, repo, "base")
+	testutil.Git(t, repo.Dir, "checkout", "-q", "-b", "feature")
+	testutil.WriteFile(t, repo, "web/app.ts", "uses toKeepKey\n")
+	head := testutil.Commit(t, repo, "use toKeepKey")
+	if code, out := sh(t, repo.Dir, env, proveBin, "run"); code != 0 {
+		t.Fatalf("the head alone should pass: %s", out)
+	}
+	testutil.Git(t, repo.Dir, "checkout", "-q", "main")
+	testutil.WriteFile(t, repo, "web/lib.ts", "\n")
+	testutil.Commit(t, repo, "drop toKeepKey")
+	// GitHub's refs/pull/<n>/merge: the head merged into the base.
+	testutil.Git(t, repo.Dir, "checkout", "-q", "--detach", "main")
+	testutil.Git(t, repo.Dir, "merge", "-q", "--no-edit", "feature")
+	merge := testutil.Head(t, repo)
+
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	testutil.Git(t, repo.Dir, "init", "-q", "--bare", origin)
+	testutil.Git(t, repo.Dir, "push", "-q", origin, "main", "feature", merge+":refs/pull/1/merge", "refs/prove/*:refs/prove/*")
+	clone := filepath.Join(t.TempDir(), "clone")
+	testutil.Git(t, repo.Dir, "clone", "-q", "file://"+origin, clone)
+	testutil.Git(t, clone, "fetch", "-q", "origin", "refs/pull/1/merge")
+	testutil.Git(t, clone, "checkout", "-q", "--detach", merge)
+
+	for _, tc := range []struct {
+		name, commit, mode string
+		code               int
+	}{
+		{"the head alone verifies (what the head default checked)", head, "verify", 0},
+		{"the merge commit (the default now) fails verify", merge, "verify", 1},
+		{"the merge commit fails run mode: web reruns on the merge and fails", merge, "run", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := append(env, "GITHUB_STEP_SUMMARY="+filepath.Join(t.TempDir(), "summary.md"), "PROVE_COMMIT="+tc.commit, "PROVE_MODE="+tc.mode)
+			if code, out := sh(t, clone, env, "bash", script); code != tc.code {
+				t.Fatalf("verify.sh exited %d, want %d:\n%s", code, tc.code, out)
+			}
+		})
+	}
+}
+
 func TestActionRunsItsScripts(t *testing.T) {
 	raw, err := os.ReadFile("action.yml")
 	if err != nil {
@@ -239,6 +299,10 @@ func TestActionRunsItsScripts(t *testing.T) {
 	}
 	if err := yaml.Unmarshal(raw, &a); err != nil {
 		t.Fatal(err)
+	}
+	// On a pull request github.sha is the head merged into the base.
+	if got := a.Inputs["commit"].Default; got != "${{ github.sha }}" {
+		t.Fatalf("commit defaults to %q, want the merge commit ${{ github.sha }}", got)
 	}
 	if a.Runs.Using != "composite" || len(a.Runs.Steps) != 2 {
 		t.Fatalf("want a composite action with two steps, got %+v", a.Runs)

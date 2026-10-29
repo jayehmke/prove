@@ -120,6 +120,14 @@ records of each commit it pushes; a failing check fails the push.
   `refs/prove/records/<id>`.
 - `prove plan [commit]` prints, per check, `accept (signed record)` or
   `run (<why>)`; `--format json` for scripts.
+- `--onto <ref>` (on `run`, `plan`, `verify`, `show` and `push`) judges
+  the commit merged into `ref`, as a pull request's CI tests it. A record
+  of the branch alone is reused only where the base left the check's
+  inputs as they were; where the base changed them, the check runs on the
+  merge. So two branches that pass alone but break together fail before
+  either lands. The merge is a commit made off to the side (no ref, HEAD
+  or file moves), the same for the same pair; a conflict is an error (needs git 2.38+). Set
+  `PROVE_ONTO` for the example hook to record pushes this way.
 
 ## .prove.yaml
 
@@ -155,7 +163,10 @@ when verify fails.
 ```
 
 It fetches `refs/prove/*` from origin first, so records pushed with the
-git store are found, and it verifies the pull request's head commit.
+git store are found. On a pull request it verifies `github.sha`, the head
+merged into the base branch, so a change on the base that breaks the
+branch fails the job; pass `commit:` the head's sha to verify the branch
+alone.
 
 With `mode: run`, a check with no valid record costs a CI run instead of a
 red job: the action prints `prove plan`, runs `prove run --stale` on the

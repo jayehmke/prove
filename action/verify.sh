@@ -14,7 +14,7 @@ if [ "${PROVE_FETCH_RECORDS:-true}" = true ]; then
   git fetch --quiet origin '+refs/prove/*:refs/prove/*' ||
     echo "::warning::prove: could not fetch refs/prove/* from origin"
 fi
-# A pull request checkout holds the merge commit, not the head it verifies.
+# The commit may not be the one checked out (a pull request's head).
 if ! git cat-file -e "$commit^{commit}" 2>/dev/null; then
   git fetch --quiet --depth=1 origin "$commit" ||
     echo "::warning::prove: could not fetch $commit from origin"
