@@ -57,14 +57,22 @@ func sh(t *testing.T, dir string, env []string, name string, args ...string) (in
 // prove on PATH, as a CI job would see it.
 func published(t *testing.T, policy string) (clone string, env []string) {
 	t.Helper()
+	return publish(t, policy, true)
+}
+
+// publish is published, with records only when record is set.
+func publish(t *testing.T, policy string, record bool) (clone string, env []string) {
+	t.Helper()
 	repo := testutil.NewRepo(t)
 	key := testutil.NewKey(t, "ci@example.com")
 	bin := filepath.Dir(proveBin)
 	env = []string{"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"), "PROVE_SSH_KEY=" + key.Path}
 	testutil.WriteFile(t, repo, ".prove.yaml", strings.ReplaceAll(policy, "$KEY", key.Public))
 	testutil.Commit(t, repo, "policy")
-	if code, out := sh(t, repo.Dir, env, proveBin, "run"); code == 2 { // a failing check (1) still stores its record
-		t.Fatalf("prove run: %s", out)
+	if record {
+		if code, out := sh(t, repo.Dir, env, proveBin, "run"); code == 2 { // a failing check (1) still stores its record
+			t.Fatalf("prove run: %s", out)
+		}
 	}
 
 	origin := filepath.Join(t.TempDir(), "origin.git")
@@ -109,6 +117,54 @@ func TestActionFailsWhenVerifyFails(t *testing.T) {
 			code, out := sh(t, clone, env, "bash", script)
 			if code != tc.code {
 				t.Fatalf("verify.sh exited %d, want %d:\n%s", code, tc.code, out)
+			}
+			got, err := os.ReadFile(summary)
+			if err != nil {
+				t.Fatalf("no job summary: %v\n%s", err, out)
+			}
+			for _, want := range tc.summary {
+				if !strings.Contains(string(got), want) {
+					t.Fatalf("summary lacks %q:\n%s", want, got)
+				}
+			}
+		})
+	}
+}
+
+func TestActionRunModeRunsMissingRecords(t *testing.T) {
+	script, err := filepath.Abs("verify.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, policy, mode string
+		record             bool
+		code               int
+		out, summary       []string
+	}{
+		{"verify mode fails a commit with no records", policyHead, "verify", false, 1,
+			[]string{"no record of check"}, []string{"**FAIL**"}},
+		{"run mode runs a check with no record and passes", policyHead, "run", false, 0,
+			[]string{"build  run (no record)", "build is stale (no record)"}, []string{"**PASS**", "| build | pass | ci |"}},
+		{"run mode runs nothing that has a valid record", policyHead, "run", true, 0,
+			[]string{"build has a current signed record, not running it"}, []string{"**PASS**"}},
+		{"run mode fails when the check itself fails", policyHead + `  - name: unit
+    run: "false"
+`, "run", false, 1, []string{"unit is stale (no record)"}, []string{"**FAIL**", "| build | pass | ci |", "| unit | fail | ci |"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clone, env := publish(t, tc.policy, tc.record)
+			summary := filepath.Join(t.TempDir(), "summary.md")
+			env = append(env, "GITHUB_STEP_SUMMARY="+summary, "PROVE_MODE="+tc.mode,
+				"PROVE_COMMIT="+strings.TrimSpace(testutil.Git(t, clone, "rev-parse", "HEAD")))
+			code, out := sh(t, clone, env, "bash", script)
+			if code != tc.code {
+				t.Fatalf("verify.sh exited %d, want %d:\n%s", code, tc.code, out)
+			}
+			for _, want := range tc.out {
+				if !strings.Contains(out, want) {
+					t.Fatalf("output lacks %q:\n%s", want, out)
+				}
 			}
 			got, err := os.ReadFile(summary)
 			if err != nil {

@@ -31,6 +31,9 @@ const usage = `prove: run checks, sign their results, verify them without rerunn
 
 Usage:
   prove run [check...]                   run checks from .prove.yaml (all if none named)
+      --stale             run only checks with no valid, current, trusted record
+      --commit <rev>      run on that commit in a temporary worktree, so
+                          uncommitted changes neither block nor leak in
   prove run --name <n> [flags] -- <cmd>  run one command with no config
       --input <glob>      an input file glob (repeatable; default: the whole repo)
       --lockfile <glob>   a lockfile glob (repeatable)
@@ -38,6 +41,12 @@ Usage:
   prove verify [commit] [--sample <pct>] [--format text|json]
                                          check every policy check of a commit (default HEAD)
   prove show [commit] [--format md|json] print what is recorded for a commit
+  prove plan [commit] [--format text|json]
+                                         per check: accept its record, or run it (and why)
+  prove push [remote] [--commit <rev>] [--as-branch <prefix>]
+                                         push the records a verifier of the commit needs
+                                         (default origin, HEAD); --as-branch pushes each
+                                         as refs/heads/<prefix>-prove-<id>
   prove version
 
 Signing: PROVE_SSH_KEY (an SSH key file), PROVE_SIGNER (an adapter name),
@@ -62,6 +71,10 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		code, err = cmdVerify(ctx, args[1:], stdout, stderr)
 	case "show":
 		code, err = cmdShow(ctx, args[1:], stdout, stderr)
+	case "plan":
+		code, err = cmdPlan(ctx, args[1:], stdout, stderr)
+	case "push":
+		code, err = cmdPush(ctx, args[1:], stdout, stderr)
 	case "version", "--version":
 		fmt.Fprintln(stdout, "prove", runner.Version)
 	case "help", "-h", "--help":
@@ -113,6 +126,39 @@ func load(ctx context.Context) (*env, error) {
 		return nil, err
 	}
 	return &env{repo: repo, policy: policy, store: st}, nil
+}
+
+// at returns the environment of commit, checked out in a temporary
+// worktree unless it is the clean HEAD, so uncommitted changes neither
+// block a run nor get recorded. The policy is the commit's own; records go
+// to the same store as e's.
+func (e *env) at(ctx context.Context, rev string) (*env, func(), error) {
+	commit, err := e.repo.ResolveCommit(ctx, rev)
+	if err != nil {
+		return nil, nil, err
+	}
+	dir, cleanup, err := e.repo.Checkout(ctx, commit)
+	if err != nil {
+		return nil, nil, err
+	}
+	fail := func(err error) (*env, func(), error) {
+		cleanup()
+		return nil, nil, err
+	}
+	repo := &gitx.Repo{Dir: dir}
+	policy, err := config.Load(dir)
+	if err != nil {
+		return fail(err)
+	}
+	var sc config.StoreConfig
+	if policy != nil {
+		sc = policy.Store
+	}
+	st, err := store.Open(ctx, sc, e.repo)
+	if err != nil {
+		return fail(err)
+	}
+	return &env{repo: repo, policy: policy, store: st}, cleanup, nil
 }
 
 // trust is the policy's signers. A policy without signers (or no policy)
@@ -188,6 +234,8 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (int, 
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	name := fs.String("name", "", "")
 	junit := fs.String("junit", "", "")
+	stale := fs.Bool("stale", false, "")
+	rev := fs.String("commit", "", "")
 	var inputs, lockfiles multi
 	fs.Var(&inputs, "input", "")
 	fs.Var(&lockfiles, "lockfile", "")
@@ -195,18 +243,29 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (int, 
 	if err != nil {
 		return 0, err
 	}
+	adHoc := *name != "" || command != nil
+	if adHoc && *stale {
+		return 0, usageError{"--stale runs checks from " + config.FileName + ", not an ad-hoc command"}
+	}
 	e, err := load(ctx)
 	if err != nil {
 		return 0, err
 	}
-	// Refuse a dirty tree before anything else, so nothing is run or stored.
-	if err := runner.CheckClean(ctx, e.repo); err != nil {
+	if *rev != "" {
+		at, cleanup, err := e.at(ctx, *rev)
+		if err != nil {
+			return 0, err
+		}
+		defer cleanup()
+		e = at
+	} else if err := runner.CheckClean(ctx, e.repo); err != nil {
+		// Refuse a dirty tree before anything else, so nothing is run or stored.
 		return 0, err
 	}
 
 	var checks []config.Check
 	switch {
-	case *name != "" || command != nil:
+	case adHoc:
 		if *name == "" || len(command) == 0 || len(names) > 0 {
 			return 0, usageError{"an ad-hoc run is: prove run --name <n> -- <cmd...>"}
 		}
@@ -243,6 +302,33 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (int, 
 			}
 			checks = append(checks, c)
 		}
+	}
+
+	if *stale {
+		p, err := makePlan(ctx, e, "HEAD", stderr)
+		if err != nil {
+			return 0, err
+		}
+		run := map[string]string{}
+		for _, c := range p.Checks {
+			if c.Action == actionRun {
+				run[c.Name] = c.Reason
+			}
+		}
+		var todo []config.Check
+		for _, c := range checks {
+			if reason, ok := run[c.Name]; ok {
+				fmt.Fprintf(stderr, "prove: %s is stale (%s)\n", c.Name, reason)
+				todo = append(todo, c)
+			} else {
+				fmt.Fprintf(stderr, "prove: %s has a current signed record, not running it\n", c.Name)
+			}
+		}
+		if len(todo) == 0 {
+			// Nothing to sign, so no key is needed.
+			return exitOK, nil
+		}
+		checks = todo
 	}
 
 	s, err := signer.FromEnv(ctx, e.repo)

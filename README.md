@@ -7,6 +7,9 @@ anyone verify that evidence in seconds without running the checks again.
 $ prove run                 # run the checks in .prove.yaml, sign and store the results
 $ prove verify              # every check has a valid, trusted, current record? exit 0 or 1
 $ prove show --format md    # what is recorded for this commit, as a table
+$ prove plan                # per check: accept its record, or run it (and why)
+$ prove run --stale         # run only the checks with no valid record
+$ prove push                # share this commit's records
 ```
 
 It is one static Go binary. It works offline and with any CI.
@@ -17,7 +20,8 @@ A **check** is a named command plus the files it reads (`inputs`, globs).
 The default input is the whole repository, which is always safe; narrow it
 on purpose.
 
-`prove run` refuses a dirty working tree, runs the command, and writes a
+`prove run` refuses a dirty working tree (or, with `--commit`, runs in a
+clean temporary worktree), runs the command, and writes a
 **record**: an [in-toto Statement v1](https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md)
 in a [DSSE envelope](https://github.com/secure-systems-lab/dsse), signed by
 your key. Its subject is the git tree (and commit) the check ran on, and its
@@ -91,6 +95,29 @@ With no `.prove.yaml`, `prove verify` checks every check recorded for this
 tree against its own command, and trusts only this machine's key. That is
 for one person on one machine; a team writes a policy.
 
+## Records that make and push themselves
+
+Nobody has to remember to record a check. The git `pre-push` hook in
+[docs/examples/pre-push](docs/examples/pre-push) makes and pushes the
+records of each commit it pushes; a failing check fails the push.
+
+- `prove run --stale` runs only the checks `prove verify` would reject for
+  the commit: no record, inputs changed, an untrusted signer, a failed run.
+  Run it twice and the second run runs nothing.
+- `prove run --commit <rev>` runs on that commit in a temporary worktree,
+  so uncommitted changes neither block the run nor leak into it. Ignored
+  files (`node_modules`, build caches) are not in that worktree; when the
+  commit is the clean HEAD, it runs in place instead.
+- `prove push [remote]` pushes the records a verifier of the commit needs:
+  every record made for it, and older records it reuses. It sets
+  `PROVE_PUSHING=1` for its own `git push`, so a hook can skip it.
+  `--as-branch <prefix>` pushes each record as
+  `refs/heads/<prefix>-prove-<id>`, for hosts that accept only branch
+  pushes; whoever verifies then fetches those branches into
+  `refs/prove/records/<id>`.
+- `prove plan [commit]` prints, per check, `accept (signed record)` or
+  `run (<why>)`; `--format json` for scripts.
+
 ## .prove.yaml
 
 ```yaml
@@ -125,7 +152,21 @@ when verify fails.
 ```
 
 It fetches `refs/prove/*` from origin first, so records pushed with the
-git store are found, and it verifies the pull request's head commit. It
+git store are found, and it verifies the pull request's head commit.
+
+With `mode: run`, a check with no valid record costs a CI run instead of a
+red job: the action prints `prove plan`, runs `prove run --stale` on the
+commit, then verifies. The job fails only when a check itself fails. It
+signs with the job's key (`PROVE_SSH_KEY` from a secret), which the policy
+must trust.
+
+```yaml
+- uses: jayehmke/prove/action@v0.1.0
+  with:
+    mode: run
+  env:
+    PROVE_SSH_KEY: ${{ runner.temp }}/prove_key   # written from a secret
+``` It
 installs the latest release unless you pin `version:`. Ubuntu runners have
 Perl's unrelated `prove` on `PATH`; the action installs its own in front.
 Any other CI runs the same two commands: `prove verify`, then

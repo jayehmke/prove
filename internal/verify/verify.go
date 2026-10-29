@@ -15,8 +15,6 @@ import (
 	"io"
 	"math"
 	"math/rand/v2"
-	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -404,7 +402,7 @@ func (v *verifier) sample(ctx context.Context, rep *Report, checks []config.Chec
 	picked := passing[:n]
 	sort.Ints(picked)
 
-	dir, cleanup, err := v.checkout(ctx)
+	dir, cleanup, err := v.Repo.Checkout(ctx, v.commit)
 	if err != nil {
 		return err
 	}
@@ -428,30 +426,6 @@ func (v *verifier) sample(ctx context.Context, rep *Report, checks []config.Chec
 		}
 	}
 	return nil
-}
-
-// checkout returns a directory holding the commit: the working tree when
-// it is the commit and clean, otherwise a temporary detached worktree.
-func (v *verifier) checkout(ctx context.Context) (string, func(), error) {
-	head, err := v.Repo.ResolveCommit(ctx, "HEAD")
-	if err == nil && head == v.commit {
-		if dirty, err := v.Repo.DirtyPaths(ctx); err == nil && len(dirty) == 0 {
-			return v.Repo.Dir, func() {}, nil
-		}
-	}
-	tmp, err := os.MkdirTemp("", "prove-sample-")
-	if err != nil {
-		return "", nil, err
-	}
-	dir := filepath.Join(tmp, "tree")
-	if _, err := v.Repo.Git(ctx, "worktree", "add", "--detach", dir, v.commit); err != nil {
-		_ = os.RemoveAll(tmp)
-		return "", nil, err
-	}
-	return dir, func() {
-		_, _ = v.Repo.Git(context.Background(), "worktree", "remove", "--force", dir)
-		_ = os.RemoveAll(tmp)
-	}, nil
 }
 
 // requirements reads requirement coverage from the records verify used.

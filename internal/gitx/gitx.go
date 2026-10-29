@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -103,6 +104,31 @@ func (r *Repo) CommonDir(ctx context.Context) (string, error) {
 		dir = filepath.Join(r.Dir, dir)
 	}
 	return dir, nil
+}
+
+// Checkout returns a directory holding commit: the working tree itself
+// when HEAD is commit and the tree is clean, otherwise a temporary detached
+// worktree. cleanup removes the temporary worktree.
+func (r *Repo) Checkout(ctx context.Context, commit string) (dir string, cleanup func(), err error) {
+	head, err := r.ResolveCommit(ctx, "HEAD")
+	if err == nil && head == commit {
+		if dirty, err := r.DirtyPaths(ctx); err == nil && len(dirty) == 0 {
+			return r.Dir, func() {}, nil
+		}
+	}
+	tmp, err := os.MkdirTemp("", "prove-tree-")
+	if err != nil {
+		return "", nil, err
+	}
+	dir = filepath.Join(tmp, "tree")
+	if _, err := r.Git(ctx, "worktree", "add", "--detach", dir, commit); err != nil {
+		_ = os.RemoveAll(tmp)
+		return "", nil, err
+	}
+	return dir, func() {
+		_, _ = r.Git(context.Background(), "worktree", "remove", "--force", dir)
+		_ = os.RemoveAll(tmp)
+	}, nil
 }
 
 // Entry is one file in a tree.
