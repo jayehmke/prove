@@ -57,14 +57,22 @@ func sh(t *testing.T, dir string, env []string, name string, args ...string) (in
 // prove on PATH, as a CI job would see it.
 func published(t *testing.T, policy string) (clone string, env []string) {
 	t.Helper()
+	return publish(t, policy, true)
+}
+
+// publish is published, with records only when record is set.
+func publish(t *testing.T, policy string, record bool) (clone string, env []string) {
+	t.Helper()
 	repo := testutil.NewRepo(t)
 	key := testutil.NewKey(t, "ci@example.com")
 	bin := filepath.Dir(proveBin)
 	env = []string{"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"), "PROVE_SSH_KEY=" + key.Path}
 	testutil.WriteFile(t, repo, ".prove.yaml", strings.ReplaceAll(policy, "$KEY", key.Public))
 	testutil.Commit(t, repo, "policy")
-	if code, out := sh(t, repo.Dir, env, proveBin, "run"); code == 2 { // a failing check (1) still stores its record
-		t.Fatalf("prove run: %s", out)
+	if record {
+		if code, out := sh(t, repo.Dir, env, proveBin, "run"); code == 2 { // a failing check (1) still stores its record
+			t.Fatalf("prove run: %s", out)
+		}
 	}
 
 	origin := filepath.Join(t.TempDir(), "origin.git")
@@ -118,6 +126,94 @@ func TestActionFailsWhenVerifyFails(t *testing.T) {
 				if !strings.Contains(string(got), want) {
 					t.Fatalf("summary lacks %q:\n%s", want, got)
 				}
+			}
+		})
+	}
+}
+
+func TestActionRunModeRunsMissingRecords(t *testing.T) {
+	script, err := filepath.Abs("verify.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, policy, mode string
+		record             bool
+		code               int
+		out, summary       []string
+	}{
+		{"verify mode fails a commit with no records", policyHead, "verify", false, 1,
+			[]string{"no record of check"}, []string{"**FAIL**"}},
+		{"run mode runs a check with no record and passes", policyHead, "run", false, 0,
+			[]string{"build  run (no record)", "build is stale (no record)"}, []string{"**PASS**", "| build | pass | ci |"}},
+		{"run mode runs nothing that has a valid record", policyHead, "run", true, 0,
+			[]string{"build has a current signed record, not running it"}, []string{"**PASS**"}},
+		{"run mode fails when the check itself fails", policyHead + `  - name: unit
+    run: "false"
+`, "run", false, 1, []string{"unit is stale (no record)"}, []string{"**FAIL**", "| build | pass | ci |", "| unit | fail | ci |"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clone, env := publish(t, tc.policy, tc.record)
+			summary := filepath.Join(t.TempDir(), "summary.md")
+			env = append(env, "GITHUB_STEP_SUMMARY="+summary, "PROVE_MODE="+tc.mode,
+				"PROVE_COMMIT="+strings.TrimSpace(testutil.Git(t, clone, "rev-parse", "HEAD")))
+			code, out := sh(t, clone, env, "bash", script)
+			if code != tc.code {
+				t.Fatalf("verify.sh exited %d, want %d:\n%s", code, tc.code, out)
+			}
+			for _, want := range tc.out {
+				if !strings.Contains(out, want) {
+					t.Fatalf("output lacks %q:\n%s", want, out)
+				}
+			}
+			got, err := os.ReadFile(summary)
+			if err != nil {
+				t.Fatalf("no job summary: %v\n%s", err, out)
+			}
+			for _, want := range tc.summary {
+				if !strings.Contains(string(got), want) {
+					t.Fatalf("summary lacks %q:\n%s", want, got)
+				}
+			}
+		})
+	}
+}
+
+func TestActionRunModeUsesTheCheckoutsPolicy(t *testing.T) {
+	// On a pull request the checkout is the merge commit, whose policy can
+	// differ from the head's: here the base changed a check's command after
+	// the head was recorded. Run mode must rerun that check under the
+	// checkout's policy, the one verify then applies, not skip it and go red.
+	script, err := filepath.Abs("verify.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := testutil.NewRepo(t)
+	key := testutil.NewKey(t, "ci@example.com")
+	env := []string{"PATH=" + filepath.Dir(proveBin) + string(os.PathListSeparator) + os.Getenv("PATH"), "PROVE_SSH_KEY=" + key.Path}
+	testutil.WriteFile(t, repo, ".prove.yaml", strings.ReplaceAll(policyHead, "$KEY", key.Public))
+	head := testutil.Commit(t, repo, "policy")
+	if code, out := sh(t, repo.Dir, env, proveBin, "run"); code != 0 {
+		t.Fatalf("prove run: %s", out)
+	}
+	testutil.WriteFile(t, repo, ".prove.yaml", strings.ReplaceAll(strings.Replace(policyHead, `run: "true"`, `run: "echo strict"`, 1), "$KEY", key.Public))
+	testutil.Commit(t, repo, "base changes the build command")
+
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	testutil.Git(t, repo.Dir, "init", "-q", "--bare", origin)
+	testutil.Git(t, repo.Dir, "push", "-q", origin, "HEAD:refs/heads/main", "refs/prove/*:refs/prove/*")
+	for _, mode := range []string{"verify", "run"} {
+		t.Run(mode, func(t *testing.T) {
+			clone := filepath.Join(t.TempDir(), "clone")
+			testutil.Git(t, repo.Dir, "clone", "-q", "file://"+origin, clone)
+			code, out := sh(t, clone, append(env, "PROVE_MODE="+mode, "PROVE_COMMIT="+head,
+				"GITHUB_STEP_SUMMARY="+filepath.Join(t.TempDir(), "summary.md")), "bash", script)
+			want := map[string]int{"verify": 1, "run": 0}[mode]
+			if code != want {
+				t.Fatalf("verify.sh in %s mode exited %d, want %d:\n%s", mode, code, want, out)
+			}
+			if mode == "run" && !strings.Contains(out, "build is stale (command differs") {
+				t.Fatalf("run mode should rerun build under the checkout's command:\n%s", out)
 			}
 		})
 	}

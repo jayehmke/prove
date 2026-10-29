@@ -1,0 +1,17 @@
+#!/bin/sh
+# A git pre-push hook that records the checks of each commit pushed to a
+# branch and pushes the records too, so nobody has to remember to.
+# Install it as .git/hooks/pre-push (or through core.hooksPath). A failing
+# check fails the push.
+remote="$1"
+
+# prove push's own git push runs this hook again: let it through.
+[ -n "$PROVE_PUSHING" ] && exit 0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in refs/heads/*) ;; *) continue ;; esac
+  case "$local_sha" in *[!0]*) ;; *) continue ;; esac # a branch deletion
+  # </dev/null: the checks must not read the ref list on stdin.
+  prove run --stale --commit "$local_sha" </dev/null || exit 1
+  prove push "$remote" --commit "$local_sha" </dev/null || exit 1
+done

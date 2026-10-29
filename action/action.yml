@@ -9,6 +9,9 @@ inputs:
   commit:
     description: The commit to verify. Default the pull request's head, else the pushed commit.
     default: ${{ github.event.pull_request.head.sha || github.sha }}
+  mode:
+    description: verify only checks records. run first runs the checks prove plan says have no valid record (signing with this job's key, which the policy must trust), then verifies.
+    default: verify
   args:
     description: More arguments for prove verify, such as --sample 10.
     default: ""
@@ -35,6 +38,7 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       env:
         PROVE_COMMIT: ${{ inputs.commit }}
+        PROVE_MODE: ${{ inputs.mode }}
         PROVE_ARGS: ${{ inputs.args }}
         PROVE_FETCH_RECORDS: ${{ inputs.fetch-records }}
       run: '"$GITHUB_ACTION_PATH/verify.sh"'
