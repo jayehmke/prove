@@ -28,9 +28,9 @@ green runs counted:
 
 The remaining PR checks ran for a reason prove reported: 70 had changed
 inputs, and 36 had a record from a signer CI did not trust. That is about
-24 runner-hours saved in two days (median saving × runs). On the main
-branch, 30 random `--sample` reruns all agreed with their records. Two
-planted bugs were both caught.
+24 runner-hours saved in two days (median saving × runs, pull request
+and main branch combined: about 20.6 h + 3.6 h). On the main branch, 30
+random `--sample` reruns all agreed with their records.
 
 ## How it works
 
