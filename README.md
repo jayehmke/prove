@@ -14,6 +14,24 @@ $ prove push                # share this commit's records
 
 It is one static Go binary. It works offline and with any CI.
 
+## Results
+
+[Fluent](https://becomefluent.io) moved its CI to prove on 2026-10-28.
+Over the first two days, compared with the seven days before, with only
+green runs counted:
+
+| | Before | With prove |
+|---|---|---|
+| Pull request CI, median | 7.9 min (470 runs) | **0.7 min** (172 runs) |
+| Main branch CI, median | 10.7 min (112 runs) | **6.5 min** (51 runs) |
+| PR checks settled from a signed record | 0 | **459 of 565 (81%)** |
+
+The remaining PR checks ran for a reason prove reported: 70 had changed
+inputs, and 36 had a record from a signer CI did not trust. That is about
+24 runner-hours saved in two days (median saving × runs, pull request
+and main branch combined: about 20.6 h + 3.6 h). On the main branch, 30
+random `--sample` reruns all agreed with their records.
+
 ## How it works
 
 A **check** is a named command plus the files it reads (`inputs`, globs).
