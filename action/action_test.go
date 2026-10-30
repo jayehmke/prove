@@ -492,7 +492,7 @@ func TestInstallChecksTheRelease(t *testing.T) {
 					t.Fatalf("installed %s does not run: %d %s", bin, c, v)
 				}
 				args, _ := os.ReadFile(ghLog)
-				want := "--repo Feral-Intelligence/prove --signer-workflow Feral-Intelligence/prove/.github/workflows/release.yml --source-ref refs/tags/v" + tc.served + " --deny-self-hosted-runners"
+				want := "--repo jayehmke/prove --signer-workflow jayehmke/prove/.github/workflows/release.yml --source-ref refs/tags/v" + tc.served + " --deny-self-hosted-runners"
 				if !strings.Contains(string(args), want) {
 					t.Fatalf("gh attestation verify ran with %q, want %q", args, want)
 				}

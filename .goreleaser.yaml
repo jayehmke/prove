@@ -37,5 +37,5 @@ release:
   # so no install ever sees a release without its attestation.
   draft: true
   github:
-    owner: Feral-Intelligence
+    owner: jayehmke
     name: prove
