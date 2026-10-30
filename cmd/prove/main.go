@@ -191,7 +191,7 @@ func (e *env) trust(ctx context.Context, stderr io.Writer) (*signer.TrustSet, er
 	if e.policy != nil && len(e.policy.Signers) > 0 {
 		return signer.NewTrustSet(e.policy.Signers)
 	}
-	s, err := signer.FromEnv(ctx, e.repo)
+	s, err := signer.FromEnv(ctx, e.repo, stderr)
 	if err != nil {
 		return nil, fmt.Errorf("no trusted signers in %s and no local key to trust: %w", config.FileName, err)
 	}
@@ -371,7 +371,7 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (int, 
 		checks = todo
 	}
 
-	s, err := signer.FromEnv(ctx, e.repo)
+	s, err := signer.FromEnv(ctx, e.repo, stderr)
 	if err != nil {
 		return 0, err
 	}

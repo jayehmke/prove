@@ -39,7 +39,15 @@ Everything on `main` so far; nothing has been released yet.
 - An example git `pre-push` hook that makes and pushes records on every
   push.
 - A GitHub action that verifies records and posts them as the job summary,
-  or runs the missing checks first (`mode: run`).
-- Release builds for linux and macOS on amd64 and arm64, with checksums.
+  or runs the missing checks first (`mode: run`). It installs the prove
+  release it is pinned to, checked against `checksums.txt` and its build
+  attestation, and never a `prove` already on `PATH`.
+- Release builds for linux and macOS on amd64 and arm64, with checksums and
+  GitHub build attestations.
+
+### Security
+
+- With no key configured, prove names the `~/.ssh` key it falls back to,
+  and refuses that fallback when `CI=true`.
 
 [Unreleased]: https://github.com/jayehmke/prove/commits/main

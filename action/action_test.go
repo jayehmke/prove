@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -325,9 +326,11 @@ func TestActionRunsItsScripts(t *testing.T) {
 	}
 }
 
-// release writes a release folder as goreleaser publishes it: an archive
-// holding prove, and checksums.txt.
-func release(t *testing.T, binary []byte, checksum string) string {
+// release writes a release folder as goreleaser publishes it for version:
+// an archive holding binary, and checksums.txt listing checksum for it (the
+// archive's own sha256 when checksum is empty). It returns the folder and
+// the archive's sha256.
+func release(t *testing.T, version string, binary []byte, checksum string) (dir, digest string) {
 	t.Helper()
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -344,17 +347,15 @@ func release(t *testing.T, binary []byte, checksum string) string {
 	if err := gz.Close(); err != nil {
 		t.Fatal(err)
 	}
-	arch := runtime.GOARCH
-	asset := "prove_" + runtime.GOOS + "_" + arch + ".tar.gz"
+	asset := "prove_" + runtime.GOOS + "_" + runtime.GOARCH + ".tar.gz"
+	digest = fmt.Sprintf("%x", sha256.Sum256(buf.Bytes()))
 	if checksum == "" {
-		checksum = fmt.Sprintf("%x", sha256.Sum256(buf.Bytes()))
+		checksum = digest
 	}
-	dir := filepath.Join(t.TempDir(), "releases")
+	dir = filepath.Join(t.TempDir(), "releases")
 	for path, data := range map[string][]byte{
-		"download/v1.2.3/" + asset:      buf.Bytes(),
-		"download/v1.2.3/checksums.txt": []byte(checksum + "  " + asset + "\n"),
-		"latest/download/" + asset:      buf.Bytes(),
-		"latest/download/checksums.txt": []byte(checksum + "  " + asset + "\n"),
+		"download/v" + version + "/" + asset:      buf.Bytes(),
+		"download/v" + version + "/checksums.txt": []byte(checksum + "  " + asset + "\n"),
 	} {
 		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, path)), 0o755); err != nil {
 			t.Fatal(err)
@@ -363,7 +364,38 @@ func release(t *testing.T, binary []byte, checksum string) string {
 			t.Fatal(err)
 		}
 	}
-	return dir
+	return dir, digest
+}
+
+// fakeGH stands in for `gh attestation verify`: it logs its arguments and
+// passes only a file whose sha256 is listed in $FAKE_GH_ATTESTED, as
+// GitHub's attestation store would.
+const fakeGH = `#!/bin/sh
+echo "$@" >>"$FAKE_GH_LOG"
+[ "$1 $2" = "attestation verify" ] || exit 2
+d=$({ sha256sum "$3" 2>/dev/null || shasum -a 256 "$3"; } | cut -d' ' -f1)
+grep -qx "$d" "$FAKE_GH_ATTESTED" || { echo "no attestation for sha256:$d" >&2; exit 1; }
+`
+
+// installPath is a PATH holding only the tools install.sh needs, so the
+// runner's own gh and Perl's prove stay out of the tests. With gh set it
+// also holds fakeGH; extra is put in front.
+func installPath(t *testing.T, gh bool, extra ...string) string {
+	t.Helper()
+	bin := t.TempDir()
+	for _, tool := range []string{"awk", "cat", "curl", "cut", "dirname", "grep", "gzip", "mkdir", "mktemp", "sha256sum", "shasum", "tar", "tr", "uname"} {
+		if p, err := exec.LookPath(tool); err == nil {
+			if err := os.Symlink(p, filepath.Join(bin, tool)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if gh {
+		if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(fakeGH), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return strings.Join(append(extra, bin), string(os.PathListSeparator))
 }
 
 func TestInstallChecksTheRelease(t *testing.T) {
@@ -378,37 +410,105 @@ func TestInstallChecksTheRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	raw, err := os.ReadFile("VERSION")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned := strings.TrimSpace(string(raw))
+
+	// planted is a prove an earlier job left on PATH that passes everything.
+	planted := t.TempDir()
+	if err := os.WriteFile(filepath.Join(planted, "prove"), []byte("#!/bin/sh\necho prove 9.9.9-planted\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
 	for _, tc := range []struct {
-		name, version, checksum string
-		ok                      bool
+		name, version, served, checksum string
+		attested, gh                    bool
+		tamper                          bool
+		env                             []string
+		path                            []string
+		fail                            string // the error wanted; empty: installs the release
+		fromPath                        bool   // uses the planted prove
 	}{
-		{"a pinned version", "1.2.3", "", true},
-		{"the latest release", "", "", true},
-		{"a checksum mismatch", "v1.2.3", strings.Repeat("0", 64), false},
+		{name: "a pinned version", version: "1.2.3", served: "1.2.3", attested: true, gh: true},
+		{name: "AC-938-1 no version installs the release action/VERSION pins", served: pinned, attested: true, gh: true},
+		{name: "AC-938-1 latest is refused", version: "latest", served: pinned, attested: true, gh: true,
+			fail: "must be an exact release"},
+		{name: "AC-938-1 a prove on PATH is not used by default", served: pinned, attested: true, gh: true,
+			path: []string{planted}},
+		{name: "AC-938-1 a prove on PATH is used with from-path: true", served: pinned, attested: true, gh: true,
+			path: []string{planted}, env: []string{"PROVE_FROM_PATH=true"}, fromPath: true},
+		{name: "a checksum mismatch", version: "v1.2.3", served: "1.2.3", checksum: strings.Repeat("0", 64), attested: true, gh: true,
+			fail: "does not match checksums.txt"},
+		{name: "AC-938-2 a tampered archive with a matching checksums.txt", version: "1.2.3", served: "1.2.3", attested: true, gh: true, tamper: true,
+			fail: "has no build attestation"},
+		{name: "AC-938-2 an archive with no attestation", version: "1.2.3", served: "1.2.3", gh: true,
+			fail: "has no build attestation"},
+		{name: "AC-938-2 no gh to check the attestation", version: "1.2.3", served: "1.2.3", attested: true,
+			fail: "GitHub CLI (gh) is needed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := release(t, binary, tc.checksum)
+			dir, digest := release(t, tc.served, binary, tc.checksum)
+			if tc.tamper {
+				// The attacker replaces the archive and rewrites checksums.txt
+				// to match; the attestation still names the genuine digest.
+				evil := append(append([]byte{}, binary...), []byte("tampered")...)
+				evilDir, _ := release(t, tc.served, evil, "")
+				dir = evilDir
+			}
+			attested := filepath.Join(t.TempDir(), "attested")
+			list := ""
+			if tc.attested {
+				list = digest + "\n"
+			}
+			if err := os.WriteFile(attested, []byte(list), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			ghLog := filepath.Join(t.TempDir(), "gh.log")
 			ghPath := filepath.Join(t.TempDir(), "github_path")
-			code, out := sh(t, t.TempDir(), []string{
+			code, out := sh(t, t.TempDir(), append([]string{
 				"PROVE_VERSION=" + tc.version, "PROVE_RELEASES=file://" + dir,
 				"RUNNER_TEMP=" + t.TempDir(), "GITHUB_PATH=" + ghPath,
-				// No prove on PATH, so the latest release is installed.
-				"PATH=/usr/bin:/bin",
-			}, "bash", script)
+				"FAKE_GH_ATTESTED=" + attested, "FAKE_GH_LOG=" + ghLog,
+				"PROVE_FROM_PATH=", "PATH=" + installPath(t, tc.gh, tc.path...),
+			}, tc.env...), "bash", script)
 			added, _ := os.ReadFile(ghPath)
-			if !tc.ok {
-				if code == 0 || len(added) > 0 || !strings.Contains(out, "does not match checksums.txt") {
-					t.Fatalf("a bad checksum installed prove (exit %d, GITHUB_PATH %q):\n%s", code, added, out)
+			switch {
+			case tc.fail != "":
+				if code == 0 || len(added) > 0 || !strings.Contains(out, tc.fail) {
+					t.Fatalf("installed prove (exit %d, GITHUB_PATH %q), want %q:\n%s", code, added, tc.fail, out)
 				}
-				return
-			}
-			if code != 0 {
-				t.Fatalf("install.sh exited %d:\n%s", code, out)
-			}
-			bin := filepath.Join(strings.TrimSpace(string(added)), "prove")
-			if c, v := sh(t, ".", nil, bin, "version"); c != 0 || !strings.HasPrefix(v, "prove ") {
-				t.Fatalf("installed %s does not run: %d %s", bin, c, v)
+			case tc.fromPath:
+				if code != 0 || len(added) > 0 || !strings.Contains(out, filepath.Join(planted, "prove")) {
+					t.Fatalf("from-path should use the prove on PATH (exit %d, GITHUB_PATH %q):\n%s", code, added, out)
+				}
+			default:
+				if code != 0 {
+					t.Fatalf("install.sh exited %d:\n%s", code, out)
+				}
+				bin := filepath.Join(strings.TrimSpace(string(added)), "prove")
+				if c, v := sh(t, ".", nil, bin, "version"); c != 0 || !strings.HasPrefix(v, "prove ") || strings.Contains(v, "planted") {
+					t.Fatalf("installed %s does not run: %d %s", bin, c, v)
+				}
+				args, _ := os.ReadFile(ghLog)
+				want := "--repo jayehmke/prove --signer-workflow jayehmke/prove/.github/workflows/release.yml --source-ref refs/tags/v" + tc.served + " --deny-self-hosted-runners"
+				if !strings.Contains(string(args), want) {
+					t.Fatalf("gh attestation verify ran with %q, want %q", args, want)
+				}
 			}
 		})
+	}
+}
+
+// TestActionPinsItsRelease keeps the action's pin an exact release, which the
+// release workflow checks against the tag it publishes.
+func TestActionPinsItsRelease(t *testing.T) {
+	raw, err := os.ReadFile("VERSION")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := strings.TrimSpace(string(raw)); !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`).MatchString(v) {
+		t.Fatalf("action/VERSION is %q, want an exact release such as 1.2.0", v)
 	}
 }

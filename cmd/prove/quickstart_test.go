@@ -86,7 +86,9 @@ func TestReadmeQuickstartRuns(t *testing.T) {
 
 		env := append(os.Environ(),
 			"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
-			"GOCACHE="+gocache, "GOMODCACHE="+gomodcache, "GOFLAGS=-mod=mod", "GOTOOLCHAIN=local")
+			"GOCACHE="+gocache, "GOMODCACHE="+gomodcache, "GOFLAGS=-mod=mod", "GOTOOLCHAIN=local",
+			// A developer's machine: on CI prove refuses the ~/.ssh key.
+			"CI=")
 		var log strings.Builder
 		for _, c := range cmds {
 			cmd := exec.Command("sh", "-c", c)

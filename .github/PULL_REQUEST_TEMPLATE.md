@@ -6,6 +6,7 @@
 
 ## Checklist
 
+- [ ] I have signed the CLA (a maintainer will point you to it on your first PR).
 - [ ] One change in this pull request.
 - [ ] Tests show it working; a bug fix has a test that fails without the fix.
 - [ ] `go vet ./...` is clean.
