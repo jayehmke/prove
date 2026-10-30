@@ -70,8 +70,8 @@ committed code.
 ## Quick start
 
 Install prove: download a binary for linux or macOS from
-[Releases](https://github.com/jayehmke/prove/releases) and check it with
-`gh attestation verify <archive> --repo jayehmke/prove`, or build it with
+[Releases](https://github.com/Feral-Intelligence/prove/releases) and check it with
+`gh attestation verify <archive> --repo Feral-Intelligence/prove`, or build it with
 Go:
 
 ```console

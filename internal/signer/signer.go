@@ -83,7 +83,7 @@ func FromEnv(ctx context.Context, repo *gitx.Repo, stderr io.Writer) (Signer, er
 			if os.Getenv("CI") == "true" {
 				return nil, fmt.Errorf("not signing with %s because CI=true: on a shared runner it may be someone's personal key; set PROVE_SSH_KEY to the key this job signs with", p)
 			}
-			fmt.Fprintf(stderr, "prove: signing with %s (set PROVE_SSH_KEY to choose a key)\n", p)
+			fmt.Fprintf(stderr, "prove: using the key %s (set PROVE_SSH_KEY to choose a key)\n", p)
 			return LoadSSH(p, identity)
 		}
 	}

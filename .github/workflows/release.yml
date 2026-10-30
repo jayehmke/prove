@@ -2,8 +2,9 @@ name: release
 
 # A v* tag publishes a GitHub release built by .goreleaser.yaml: static
 # prove and prove-store-s3 for linux and darwin on amd64 and arm64, with
-# checksums.txt, and attests every archive in it (GitHub artifact
-# attestations), which action/install.sh verifies before it runs prove.
+# checksums.txt, as a draft; attests every archive in it (GitHub artifact
+# attestations), which action/install.sh verifies before it runs prove;
+# and only then publishes the release.
 on:
   push:
     tags: ["v*"]
@@ -43,3 +44,7 @@ jobs:
       - uses: actions/attest-build-provenance@v2
         with:
           subject-checksums: dist/checksums.txt
+      - name: Publish the attested release
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

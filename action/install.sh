@@ -2,7 +2,7 @@
 # Puts prove on PATH: the release named by PROVE_VERSION, by default the one
 # this action pins in action/VERSION (never "latest"). The archive must
 # match the release's checksums.txt and carry a GitHub build attestation
-# from jayehmke/prove's release workflow for that tag, so a tampered release
+# from Feral-Intelligence/prove's release workflow for that tag, so a tampered release
 # whose checksums.txt was rewritten to match still fails.
 #
 # A prove already on PATH is used only when PROVE_FROM_PATH=true: on a
@@ -26,7 +26,7 @@ if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)
   exit 1
 fi
 
-repo=jayehmke/prove
+repo=Feral-Intelligence/prove
 releases="${PROVE_RELEASES:-https://github.com/$repo/releases}"
 url="$releases/download/v$version"
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
