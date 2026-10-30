@@ -33,6 +33,9 @@ changelog:
   use: github
 
 release:
+  # Published as a draft: release.yml attests the archives, then publishes it,
+  # so no install ever sees a release without its attestation.
+  draft: true
   github:
     owner: jayehmke
     name: prove

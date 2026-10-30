@@ -60,6 +60,65 @@ func TestExternalSigner(t *testing.T) {
 	}
 }
 
+func TestHomeKeyFallback(t *testing.T) {
+	// A key in ~/.ssh, and no PROVE_SSH_KEY or git signing key.
+	setup := func(t *testing.T) (home string, key testutil.Key) {
+		home = testutil.Isolate(t)
+		key = testutil.NewKey(t, "dev@example.com")
+		data, err := os.ReadFile(key.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(home, ".ssh"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(home, ".ssh", "id_ed25519"), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return home, key
+	}
+	ctx := context.Background()
+
+	t.Run("AC-938-3 off CI it signs with the ~/.ssh key and says which", func(t *testing.T) {
+		home, key := setup(t)
+		var stderr bytes.Buffer
+		s, err := signer.FromEnv(ctx, nil, &stderr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := s.Key(); got.Key != key.Public {
+			t.Fatalf("signed with %q, want the ~/.ssh key %q", got.Key, key.Public)
+		}
+		if want := filepath.Join(home, ".ssh", "id_ed25519"); !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr should name %s: %q", want, stderr.String())
+		}
+	})
+
+	t.Run("AC-938-3 with CI=true it refuses the ~/.ssh key", func(t *testing.T) {
+		setup(t)
+		t.Setenv("CI", "true")
+		var stderr bytes.Buffer
+		if s, err := signer.FromEnv(ctx, nil, &stderr); err == nil || !strings.Contains(err.Error(), "PROVE_SSH_KEY") {
+			t.Fatalf("CI=true signed with the ~/.ssh key (%v, %v)", s, err)
+		}
+	})
+
+	t.Run("AC-938-3 with CI=true and PROVE_SSH_KEY set it signs with that key", func(t *testing.T) {
+		setup(t)
+		t.Setenv("CI", "true")
+		job := testutil.NewKey(t, "ci@example.com")
+		t.Setenv("PROVE_SSH_KEY", job.Path)
+		var stderr bytes.Buffer
+		s, err := signer.FromEnv(ctx, nil, &stderr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := s.Key(); got.Key != job.Public {
+			t.Fatalf("signed with %q, want PROVE_SSH_KEY's %q", got.Key, job.Public)
+		}
+	})
+}
+
 func TestSSHSignatureIsBoundToItsKey(t *testing.T) {
 	testutil.Isolate(t)
 	alice := testutil.NewKey(t, "alice")

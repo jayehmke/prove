@@ -88,8 +88,9 @@ committed code.
 ## Quick start
 
 Install prove: download a binary for linux or macOS from
-[Releases](https://github.com/jayehmke/prove/releases) (check it against
-`checksums.txt`), or build it with Go:
+[Releases](https://github.com/jayehmke/prove/releases) and check it with
+`gh attestation verify <archive> --repo jayehmke/prove`, or build it with
+Go:
 
 ```console
 $ go install github.com/jayehmke/prove/cmd/prove@latest
@@ -201,8 +202,14 @@ must trust.
     PROVE_SSH_KEY: ${{ runner.temp }}/prove_key   # written from a secret
 ```
 
-It installs the latest release unless you pin `version:`. Ubuntu runners have
-Perl's unrelated `prove` on `PATH`; the action installs its own in front.
+How the action trusts the prove it runs: it installs the exact release
+pinned in `action/VERSION` at the action ref you use (or `version:`; never
+"latest"), and only after the archive matches `checksums.txt` and
+`gh attestation verify` shows it was built by this repository's release
+workflow for that tag, so a swapped archive fails even with a rewritten
+`checksums.txt`. It ignores any `prove` already on `PATH` (a persistent
+runner can keep one from an earlier job) unless you set `from-path: true`,
+and pinning the action to a commit sha pins all of this.
 Any other CI runs the same two commands: `prove verify`, then
 `prove show --format md`.
 
@@ -210,7 +217,7 @@ Any other CI runs the same two commands: `prove verify`, then
 
 | Variable | Meaning |
 |---|---|
-| `PROVE_SSH_KEY` | SSH private key file, or a `.pub` file whose key is in ssh-agent. Default: git's `user.signingkey` when `gpg.format=ssh`, then `~/.ssh/id_ed25519`, `id_ecdsa`, `id_rsa`. |
+| `PROVE_SSH_KEY` | SSH private key file, or a `.pub` file whose key is in ssh-agent. Default: git's `user.signingkey` when `gpg.format=ssh`, then `~/.ssh/id_ed25519`, `id_ecdsa`, `id_rsa`; prove names the `~/.ssh` key it takes, and refuses it when `CI=true`. |
 | `PROVE_IDENTITY` | the identity written into records. Default: git's `user.email`. Verify names signers by the trusted key, not by this claim. |
 | `PROVE_SIGNER` | the name of a `prove-signer-<name>` adapter instead of SSH. |
 

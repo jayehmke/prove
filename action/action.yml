@@ -16,8 +16,14 @@ inputs:
     description: More arguments for prove verify, such as --sample 10.
     default: ""
   version:
-    description: The prove release to install, such as 1.2.0. Empty uses prove from PATH, or else the latest release.
+    description: The exact prove release to install, such as 1.2.0. Empty installs the release this action pins (action/VERSION). Never "latest".
     default: ""
+  from-path:
+    description: true uses a prove already on PATH instead of installing one. Only for runners you control; on a shared runner an earlier job can plant a prove that passes everything.
+    default: "false"
+  token:
+    description: The token gh uses to read the release's build attestation.
+    default: ${{ github.token }}
   fetch-records:
     description: Fetch refs/prove/* from origin first (where the git store keeps records).
     default: "true"
@@ -32,6 +38,8 @@ runs:
       shell: bash
       env:
         PROVE_VERSION: ${{ inputs.version }}
+        PROVE_FROM_PATH: ${{ inputs.from-path }}
+        GH_TOKEN: ${{ inputs.token }}
       run: '"$GITHUB_ACTION_PATH/install.sh"'
     - name: prove verify
       shell: bash

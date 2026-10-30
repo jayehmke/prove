@@ -31,7 +31,7 @@ func Isolate(t *testing.T) string {
 	t.Setenv("HOME", home)
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	for _, k := range []string{"PROVE_SIGNER", "PROVE_SSH_KEY", "PROVE_IDENTITY", "SSH_AUTH_SOCK"} {
+	for _, k := range []string{"PROVE_SIGNER", "PROVE_SSH_KEY", "PROVE_IDENTITY", "SSH_AUTH_SOCK", "CI"} {
 		t.Setenv(k, "")
 		_ = os.Unsetenv(k)
 	}
