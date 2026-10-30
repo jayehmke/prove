@@ -2,13 +2,16 @@ name: release
 
 # A v* tag publishes a GitHub release built by .goreleaser.yaml: static
 # prove and prove-store-s3 for linux and darwin on amd64 and arm64, with
-# checksums.txt.
+# checksums.txt, and attests every archive in it (GitHub artifact
+# attestations), which action/install.sh verifies before it runs prove.
 on:
   push:
     tags: ["v*"]
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   goreleaser:
@@ -21,6 +24,13 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: The tag is the release action/VERSION pins
+        run: |
+          pin="v$(tr -d '[:space:]' <action/VERSION)"
+          if [ "$pin" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME, but action/VERSION pins $pin: bump action/VERSION, then tag"
+            exit 1
+          fi
       - name: go test
         run: go test -race ./...
       - uses: goreleaser/goreleaser-action@v6
@@ -30,3 +40,6 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-checksums: dist/checksums.txt

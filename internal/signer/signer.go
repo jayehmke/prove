@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -40,9 +41,11 @@ func (s *SSH) Key() (config.SignerKey, error) {
 //     a prove-signer-<name> adapter.
 //   - PROVE_SSH_KEY is the SSH key file. Without it prove uses git's
 //     user.signingkey when gpg.format is ssh, then ~/.ssh/id_ed25519,
-//     id_ecdsa and id_rsa.
+//     id_ecdsa and id_rsa. That last fallback names the key it took on
+//     stderr, and is refused when CI=true: on a shared runner the key in
+//     ~/.ssh can be someone's personal key.
 //   - PROVE_IDENTITY is the claimed identity. Without it, git's user.email.
-func FromEnv(ctx context.Context, repo *gitx.Repo) (Signer, error) {
+func FromEnv(ctx context.Context, repo *gitx.Repo, stderr io.Writer) (Signer, error) {
 	identity := os.Getenv("PROVE_IDENTITY")
 	if identity == "" && repo != nil {
 		identity, _ = repo.Git(ctx, "config", "user.email")
@@ -77,6 +80,10 @@ func FromEnv(ctx context.Context, repo *gitx.Repo) (Signer, error) {
 	for _, name := range []string{"id_ed25519", "id_ecdsa", "id_rsa"} {
 		p := filepath.Join(home, ".ssh", name)
 		if _, err := os.Stat(p); err == nil {
+			if os.Getenv("CI") == "true" {
+				return nil, fmt.Errorf("not signing with %s because CI=true: on a shared runner it may be someone's personal key; set PROVE_SSH_KEY to the key this job signs with", p)
+			}
+			fmt.Fprintf(stderr, "prove: signing with %s (set PROVE_SSH_KEY to choose a key)\n", p)
 			return LoadSSH(p, identity)
 		}
 	}
