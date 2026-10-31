@@ -20,12 +20,8 @@ Or download a binary for linux or macOS from
 `gh attestation verify <archive> --repo jayehmke/prove`. prove has no
 release yet; until the first one, install it with `go install`.
 
-In GitHub Actions, use the [action](action/action.yml), pinned to a
-release tag (see [In CI](#in-ci)):
-
-```yaml
-- uses: jayehmke/prove/action@v0.1.0
-```
+The [GitHub action](action/action.yml) installs a prove release, so it
+needs the first release too; see [In CI](#in-ci).
 
 ## Commands
 

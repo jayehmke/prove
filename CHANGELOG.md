@@ -19,8 +19,9 @@ Nothing is released yet. This is what is on `main` today.
 - `prove verify` checks that every check in the policy has a valid record:
   the signature, a trusted signer allowed to sign that check, the same
   command, unchanged inputs, a passing run, and the requirement IDs the
-  policy requires. It gives one reason per failure. `--sample <n>` reruns
-  a sample of checks and fails when a rerun disagrees with its record.
+  policy requires. It gives one reason per failure. `--sample <pct>` reruns
+  that percentage of checks and fails when a rerun disagrees with its
+  record.
 - Records are reused across commits while a check's inputs are unchanged,
   using a fingerprint over the command, the input files and lockfiles.
 - `prove show --format md|json` shows what is recorded for a commit.
