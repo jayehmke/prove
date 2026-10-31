@@ -17,8 +17,11 @@ $ go install github.com/jayehmke/prove/cmd/prove@latest
 
 or download a binary for linux or macOS from
 [Releases](https://github.com/jayehmke/prove/releases) and check it with
-`gh attestation verify <archive> --repo jayehmke/prove`. In GitHub Actions,
-use the action (see [In CI](#in-ci)).
+`gh attestation verify <archive> --repo jayehmke/prove`. prove has no
+release yet; until the first one, install it with `go install`.
+
+The [GitHub action](action/action.yml) installs a prove release, so it
+needs the first release too; see [In CI](#in-ci).
 
 ## Commands
 
