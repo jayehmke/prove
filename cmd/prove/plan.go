@@ -154,13 +154,14 @@ func cmdPush(ctx context.Context, args []string, stdout, stderr io.Writer) (int,
 	fs := flag.NewFlagSet("push", flag.ContinueOnError)
 	rev := fs.String("commit", "HEAD", "")
 	prefix := fs.String("as-branch", "", "")
+	to := fs.String("to", "", "")
 	onto := fs.String("onto", "", "")
 	pos, rest, err := parse(fs, args)
 	if err != nil {
 		return 0, err
 	}
-	if rest != nil || len(pos) > 1 {
-		return 0, usageError{"push is: prove push [remote] [--commit <rev>] [--as-branch <prefix>] [--onto <ref>]"}
+	if rest != nil || len(pos) > 1 || (*to != "" && (len(pos) > 0 || *prefix != "")) {
+		return 0, usageError{"push is: prove push [remote] [--commit <rev>] [--as-branch <prefix>] [--onto <ref>], or prove push --to <store> [--commit <rev>] [--onto <ref>]"}
 	}
 	remote := "origin"
 	if len(pos) == 1 {
@@ -192,6 +193,9 @@ func cmdPush(ctx context.Context, args []string, stdout, stderr io.Writer) (int,
 		fmt.Fprintf(stderr, "prove: no records for %s to push\n", short(commit))
 		return exitOK, nil
 	}
+	if *to != "" {
+		return pushToStore(ctx, e, *to, ids, commit, stderr)
+	}
 	var refspecs []string
 	for _, id := range ids {
 		dst := store.RefPrefix + id
@@ -206,6 +210,41 @@ func cmdPush(ctx context.Context, args []string, stdout, stderr io.Writer) (int,
 	fmt.Fprintf(stderr, "prove: pushing %d record(s) for %s to %s\n", len(ids), short(commit), remote)
 	if err := gitPush(ctx, e.repo, remote, refspecs, stdout, stderr); err != nil {
 		return 0, err
+	}
+	return exitOK, nil
+}
+
+// pushToStore copies records from the git store into another store (an
+// adapter such as prove-store-github), so sharing them makes no git ref.
+func pushToStore(ctx context.Context, e *env, name string, ids []string, commit string, stderr io.Writer) (int, error) {
+	dst, err := store.Open(ctx, config.StoreConfig{Type: name}, e.repo)
+	if err != nil {
+		return 0, err
+	}
+	if _, ok := dst.(*store.Git); ok {
+		return 0, usageError{"prove push --to names another store; to push the git store's refs, give a remote"}
+	}
+	metas, err := e.store.List(ctx, store.Query{})
+	if err != nil {
+		return 0, err
+	}
+	byID := map[string]store.Meta{}
+	for _, m := range metas {
+		byID[m.ID] = m
+	}
+	fmt.Fprintf(stderr, "prove: copying %d record(s) for %s to the %s\n", len(ids), short(commit), dst.Name())
+	for _, id := range ids {
+		meta, ok := byID[id]
+		if !ok {
+			return 0, fmt.Errorf("record %s is not in the %s", short(id), e.store.Name())
+		}
+		data, err := e.store.Get(ctx, id)
+		if err != nil {
+			return 0, err
+		}
+		if err := dst.Put(ctx, meta, data); err != nil {
+			return 0, err
+		}
 	}
 	return exitOK, nil
 }

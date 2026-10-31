@@ -3,7 +3,7 @@
 Storage and signing are adapters. prove has three built in: the `local` and
 `git` stores and the `ssh` signer. Anything else is an external program on
 `PATH`, in the style of git credential helpers. prove's releases include
-one, [`prove-store-s3`](#s3).
+two, [`prove-store-s3`](#s3) and [`prove-store-github`](#github).
 
 | Kind   | Program name           | Picked by                                 |
 |--------|------------------------|-------------------------------------------|
@@ -211,3 +211,33 @@ Actions, give a role with that policy to the workflow through OIDC
 
 `list` reads every index entry, so it costs one request per record plus
 one per thousand records; keep one prefix per repository.
+
+## GitHub
+
+`prove-store-github` keeps each record as a comment on the GitHub commit it
+was made for, so the record shows on that commit and on any pull request
+that contains it, and sharing a record makes no git ref. Install it with
+prove's release archives or
+`go install github.com/jayehmke/prove/cmd/prove-store-github@latest`.
+
+It is meant for copying, not as a repository's main store:
+
+```sh
+prove push --to github            # after the commit is on GitHub
+prove fetch --from github $(git rev-list origin/main..HEAD)   # in CI, then prove verify
+```
+
+A comment opens with `<!-- prove-record v1 -->` and holds the record's meta
+and its bytes (base64) in a ```` ```prove-record ```` block. Put skips a
+commit that already has the record. Get and list skip any comment whose
+bytes don't hash to its id, and anyone who can comment can add only records
+that `verify` then checks like any other: a store can make a check fail,
+never pass.
+
+Options, all optional: `repo` (`owner/name`; default `$GITHUB_REPOSITORY`,
+else the `origin` remote), `api` (default `$GITHUB_API_URL`, else
+`https://api.github.com`) and `commit` (where get looks first; `prove fetch`
+sets it). The token is `$GH_TOKEN` or `$GITHUB_TOKEN`, else `gh auth token`;
+it needs `contents: write` to comment (`contents: read` to fetch). List
+without a commit reads every commit comment in the repository, one request
+per hundred.

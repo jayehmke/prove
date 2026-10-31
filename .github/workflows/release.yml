@@ -1,7 +1,7 @@
 name: release
 
 # A v* tag publishes a GitHub release built by .goreleaser.yaml: static
-# prove and prove-store-s3 for linux and darwin on amd64 and arm64, with
+# prove, prove-store-s3 and prove-store-github for linux and darwin on amd64 and arm64, with
 # checksums.txt, as a draft; attests every archive in it (GitHub artifact
 # attestations), which action/install.sh verifies before it runs prove;
 # and only then publishes the release.

@@ -1,4 +1,4 @@
-# Releases: a v* tag builds static prove and prove-store-s3 binaries for
+# Releases: a v* tag builds static prove, prove-store-s3 and prove-store-github binaries for
 # linux and darwin on amd64 and arm64, one archive per platform, and
 # checksums.txt. action/install.sh downloads these archive names.
 version: 2
@@ -19,6 +19,10 @@ builds:
     id: prove-store-s3
     main: ./cmd/prove-store-s3
     binary: prove-store-s3
+  - <<: *build
+    id: prove-store-github
+    main: ./cmd/prove-store-github
+    binary: prove-store-github
 
 archives:
   - formats: [tar.gz]
