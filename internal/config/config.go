@@ -33,6 +33,10 @@ type Config struct {
 	Requirements Requirements `yaml:"requirements"`
 	// Store is where records are kept.
 	Store StoreConfig `yaml:"store"`
+	// Share is a second store that prove push --share copies records
+	// into, and that verify, plan and show read along with Store. Empty
+	// means none.
+	Share StoreConfig `yaml:"share"`
 	// Sample is the percent of checks verify reruns by default.
 	Sample float64 `yaml:"sample"`
 }
@@ -191,6 +195,14 @@ func (c *Config) validate() error {
 	}
 	if c.Store.Type != "" && !ValidName(c.Store.Type) {
 		return fmt.Errorf("store type %q must be git, local or an adapter name (letters, digits, '.', '_' or '-')", c.Store.Type)
+	}
+	switch {
+	case c.Share.Type == "" && (c.Share.Path != "" || len(c.Share.Options) > 0):
+		return fmt.Errorf("share needs a type: local or an adapter name such as s3")
+	case c.Share.Type == "git":
+		return fmt.Errorf("share type git: records in the git store are shared with prove push <remote>; name another store")
+	case c.Share.Type != "" && !ValidName(c.Share.Type):
+		return fmt.Errorf("share type %q must be local or an adapter name (letters, digits, '.', '_' or '-')", c.Share.Type)
 	}
 	if c.Requirements.Pattern != "" {
 		if _, err := regexp.Compile(c.Requirements.Pattern); err != nil {

@@ -1,12 +1,14 @@
 // Package s3 is prove-store-s3, a prove store adapter that keeps records
 // in an S3 bucket. See docs/adapters.md.
 //
-// Each record is stored as <prefix>/<commit>/<signer>/<check>.json, and
-// an index entry <prefix>/index/<id>.json points to it. Every write is
+// Each record is stored as <prefix>/<check>/<fingerprint>/<id>.json, by
+// the check's inputs and not by commit, so a record reused on a later
+// commit (or on the squash merge of a pull request) is the same object.
+// An index entry <prefix>/index/<id>.json points to it. Every write is
 // conditional (If-None-Match: *), so the adapter never replaces an
-// object: a second record for the same key goes to <check>.2.json, then
-// <check>.3.json. Turn on bucket versioning as well, so a writer with
-// other tools can't destroy records either.
+// object: if another object already holds a record's key, the record goes
+// to <id>.2.json, then <id>.3.json. Turn on bucket versioning as well, so
+// a writer with other tools can't destroy records either.
 //
 // Credentials come from the standard AWS chain (environment, shared
 // config, SSO, web identity for OIDC in CI, instance roles).
@@ -42,7 +44,7 @@ const Program = "prove-store-s3"
 
 var idPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// maxSuffix bounds the keys tried for one check, commit and signer.
+// maxSuffix bounds the keys tried for one record.
 const maxSuffix = 1000
 
 // Store keeps records in one bucket under one prefix.
@@ -133,8 +135,9 @@ type index struct {
 
 func (s *Store) indexKey(id string) string { return s.prefix + "index/" + id + ".json" }
 
-// recordKey is <prefix>/<commit>/<signer>/<check>.json, or
-// <check>.<n>.json for n > 1. Each part is one key segment.
+// recordKey is <prefix>/<check>/<fingerprint>/<id>.json, or
+// <id>.<n>.json for n > 1: keyed by what the check ran on (its command and
+// inputs), not by the commit. Each part is one key segment.
 func (s *Store) recordKey(m store.Meta, n int) string {
 	seg := func(v string) string {
 		if v == "" || v == "." || v == ".." || v == "index" {
@@ -142,11 +145,11 @@ func (s *Store) recordKey(m store.Meta, n int) string {
 		}
 		return url.PathEscape(v)
 	}
-	name := seg(m.Check)
+	name := m.ID
 	if n > 1 {
 		name = fmt.Sprintf("%s.%d", name, n)
 	}
-	return s.prefix + seg(m.Commit) + "/" + seg(m.Signer) + "/" + name + ".json"
+	return s.prefix + seg(m.Check) + "/" + seg(m.Fingerprint) + "/" + name + ".json"
 }
 
 // Put stores the record. A record whose ID is already indexed is left as
@@ -173,7 +176,7 @@ func (s *Store) Put(ctx context.Context, meta store.Meta, data []byte) error {
 		}
 	}
 	if key == "" {
-		return fmt.Errorf("%d records already stored for check %q on %s by %s", maxSuffix, meta.Check, meta.Commit, meta.Signer)
+		return fmt.Errorf("%d objects already hold the keys of record %s", maxSuffix, meta.ID)
 	}
 
 	entry, err := json.Marshal(index{Meta: meta, Key: key})

@@ -10,6 +10,7 @@ func TestParse(t *testing.T) {
 	c, err := Parse([]byte(`
 version: 1
 store: local
+share: {type: s3, options: {bucket: records}}
 signers:
   alice: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeFakeFakeFakeFakeFakeFakeFakeFakeFake
   ci: {type: kms, key: "arn:aws:kms:key/1"}
@@ -25,6 +26,9 @@ sample: 10
 	}
 	if c.Store.Type != "local" || c.Sample != 10 {
 		t.Fatalf("store %+v sample %v", c.Store, c.Sample)
+	}
+	if c.Share.Type != "s3" || c.Share.Options["bucket"] != "records" {
+		t.Fatalf("share %+v", c.Share)
 	}
 	if c.Signers["alice"].Type != "ssh" || c.Signers["ci"] != (SignerKey{Type: "kms", Key: "arn:aws:kms:key/1"}) {
 		t.Fatalf("signers %+v", c.Signers)
@@ -52,6 +56,9 @@ sample: 10
 		"version: 2\n":                                            "version",
 		"store: x/run\n":                                          "store type",
 		"store: {type: ../x}\n":                                   "store type",
+		"share: git\n":                                            "share type git",
+		"share: {type: ../x}\n":                                   "share type",
+		"share: {options: {bucket: b}}\n":                         "share needs a type",
 		"signers: {m: {type: x/run, key: k}}\n":                   "signer \"m\" type",
 	} {
 		if _, err := Parse([]byte(yml)); err == nil || !strings.Contains(err.Error(), want) {

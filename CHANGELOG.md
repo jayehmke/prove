@@ -24,14 +24,17 @@ Everything on `main` so far; nothing has been released yet.
   signers and which checks each may sign, requirement IDs read from JUnit
   reports, and `--sample` reruns that spot-check records.
 - Stores: git (records under `refs/prove/records/`, the default), a local
-  folder, and S3 through the `prove-store-s3` adapter. Other stores and
+  folder, and S3 through the `prove-store-s3` adapter, which keys records
+  by check and fingerprint rather than commit. Other stores and
   signers plug in as adapters, and `storetest` is a conformance suite for
   new stores.
 - `prove run --stale` runs only the checks that have no valid record, and
   `prove run --commit <rev>` runs on a commit in a clean temporary
   worktree.
 - `prove push` shares a commit's records, optionally as branches for hosts
-  that accept only branch pushes.
+  that accept only branch pushes, or with `--share` into the policy's
+  `share:` store (an S3 bucket, say) with no git push at all. verify, plan
+  and show read the share store along with the store.
 - `prove plan` prints, per check, whether its record is accepted or why it
   must run.
 - `--onto <ref>` judges a commit merged into another ref, the way a pull
