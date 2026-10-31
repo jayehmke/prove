@@ -1,7 +1,33 @@
 # prove
 
+[![CI](https://github.com/jayehmke/prove/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jayehmke/prove/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Go Reference](https://pkg.go.dev/badge/github.com/jayehmke/prove.svg)](https://pkg.go.dev/github.com/jayehmke/prove)
+
 prove records signed evidence of which checks ran on which code, and lets
 anyone verify that evidence in seconds without running the checks again.
+
+## Install
+
+With Go 1.24 or later:
+
+```console
+$ go install github.com/jayehmke/prove/cmd/prove@latest
+```
+
+Or download a binary for linux or macOS from
+[Releases](https://github.com/jayehmke/prove/releases) and check it with
+`gh attestation verify <archive> --repo jayehmke/prove`. prove has no
+release yet; until the first one, install it with `go install`.
+
+In GitHub Actions, use the [action](action/action.yml), pinned to a
+release tag (see [In CI](#in-ci)):
+
+```yaml
+- uses: jayehmke/prove/action@v0.1.0
+```
+
+## Commands
 
 ```console
 $ prove run                 # run the checks in .prove.yaml, sign and store the results
@@ -87,16 +113,7 @@ committed code.
 
 ## Quick start
 
-Install prove: download a binary for linux or macOS from
-[Releases](https://github.com/jayehmke/prove/releases) and check it with
-`gh attestation verify <archive> --repo jayehmke/prove`, or build it with
-Go:
-
-```console
-$ go install github.com/jayehmke/prove/cmd/prove@latest
-```
-
-prove signs with your SSH key: git's signing key when `gpg.format=ssh`,
+[Install prove](#install). It signs with your SSH key: git's signing key when `gpg.format=ssh`,
 else `~/.ssh/id_ed25519` (see [Signing](#signing)). Then, in any git
 repository with everything committed, record a check and verify it. No
 config is needed:
@@ -246,7 +263,14 @@ setup error (a dirty tree, no key, a bad `.prove.yaml`).
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Contributions need a signed CLA.
+Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
+Changes are listed in [CHANGELOG.md](CHANGELOG.md).
+
+## Security
+
+Please report vulnerabilities privately, as [SECURITY.md](SECURITY.md)
+describes, never in a public issue.
 
 ## License
 
-Apache-2.0.
+[Apache-2.0](LICENSE).
