@@ -306,6 +306,28 @@ func TestPushShare(t *testing.T) {
 		}
 	})
 
+	t.Run("prove push to a git remote never reads the share store, so an unreachable one costs no warning", func(t *testing.T) {
+		dir := shareSetupWith(t, "share: no-such-store\n").Dir
+		remote := bareRemote(t, dir)
+		var warn bytes.Buffer
+		old := store.Warnings
+		store.Warnings = &warn
+		t.Cleanup(func() { store.Warnings = old })
+		if code, _, errOut := prove(t, "run"); code != 0 {
+			t.Fatalf("prove run: %s", errOut)
+		}
+		warn.Reset()
+		if code, _, errOut := prove(t, "push", "origin"); code != 0 {
+			t.Fatalf("prove push origin: %s", errOut)
+		}
+		if warn.Len() > 0 {
+			t.Fatalf("prove push origin read the share store:\n%s", warn.String())
+		}
+		if refs := strings.Fields(testutil.Git(t, remote, "for-each-ref", "--format=%(refname)", store.RefPrefix)); len(refs) != 2 {
+			t.Fatalf("want both records pushed, got %v", refs)
+		}
+	})
+
 	t.Run("prove push --share needs a share store", func(t *testing.T) {
 		countSetup(t)
 		if code, _, errOut := prove(t, "push", "--share"); code != exitUsage || !strings.Contains(errOut, "share store") {
