@@ -32,6 +32,10 @@ Everything on `main` so far; nothing has been released yet.
   worktree.
 - `prove push` shares a commit's records, optionally as branches for hosts
   that accept only branch pushes.
+- `prove push --to <store>` and `prove fetch --from <store>` copy records
+  between the git store and another store, and `prove-store-github` keeps
+  records as comments on their commits, so a host that accepts only branch
+  pushes needs no record branches.
 - `prove plan` prints, per check, whether its record is accepted or why it
   must run.
 - `--onto <ref>` judges a commit merged into another ref, the way a pull

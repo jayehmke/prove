@@ -55,6 +55,11 @@ Usage:
                                          as refs/heads/<prefix>-prove-<id>
       --onto <ref>        judge the commit merged into ref (a pull request
                           against its base), not the commit alone
+  prove push --to <store> [--commit <rev>] [--onto <ref>]
+                                         copy those records into another store (such as
+                                         github: a comment on each record's commit), no git ref
+  prove fetch --from <store> [commit...] copy a store's records of each commit (default HEAD)
+                                         into this repository's store, for verify
   prove version
 
 Signing: PROVE_SSH_KEY (an SSH key file), PROVE_SIGNER (an adapter name),
@@ -83,6 +88,8 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		code, err = cmdPlan(ctx, args[1:], stdout, stderr)
 	case "push":
 		code, err = cmdPush(ctx, args[1:], stdout, stderr)
+	case "fetch":
+		code, err = cmdFetch(ctx, args[1:], stdout, stderr)
 	case "version", "--version":
 		fmt.Fprintln(stdout, "prove", runner.Version)
 	case "help", "-h", "--help":

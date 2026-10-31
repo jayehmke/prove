@@ -149,7 +149,15 @@ records of each commit it pushes; a failing check fails the push.
   `--as-branch <prefix>` pushes each record as
   `refs/heads/<prefix>-prove-<id>`, for hosts that accept only branch
   pushes; whoever verifies then fetches those branches into
-  `refs/prove/records/<id>`.
+  `refs/prove/records/<id>`. Prefer `--to github` below: it makes no branch.
+- `prove push --to <store>` copies the same records into another store
+  instead of pushing refs. `--to github` comments each record on the commit
+  it was made for (`prove-store-github`), so it shows on the pull request
+  and works where only branch pushes are allowed.
+- `prove fetch --from <store> [commit...]` copies another store's records of
+  each commit (default HEAD) into this repository's store, where `verify`
+  reads them. It refuses a record whose bytes don't hash to its id; `verify`
+  checks every signature as always, so the other store is never trusted.
 - `prove plan [commit]` prints, per check, `accept (signed record)` or
   `run (<why>)`; `--format json` for scripts.
 - `--onto <ref>` (on `run`, `plan`, `verify`, `show` and `push`) judges
@@ -248,6 +256,9 @@ git commit signatures.
 - **local** keeps records in a folder (`path:`; default `.git/prove/records`).
 - **s3** keeps records in an S3 bucket with `prove-store-s3`, released with
   prove. It never overwrites an object.
+- **github** keeps records as commit comments with `prove-store-github`,
+  released with prove. Most useful with `prove push --to github` and
+  `prove fetch --from github`.
 - Anything else is a `prove-store-<name>` adapter. See
   [docs/adapters.md](docs/adapters.md).
 
