@@ -30,7 +30,9 @@ requirements:
   required: [AC-12-1, AC-12-2]
 
 store: git      # git (default), local, s3, or another adapter; see below
-share: s3       # optional: where prove push --share copies records; see below
+share:          # optional: where prove push --share copies records; see below
+  type: s3
+  options: {bucket: my-prove-records}
 sample: 0       # percent of checks `prove verify` reruns by default
 ```
 

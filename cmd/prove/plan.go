@@ -194,23 +194,19 @@ func cmdPush(ctx context.Context, args []string, stdout, stderr io.Writer) (int,
 	if err != nil {
 		return 0, err
 	}
-	ids, err := pushIDs(ctx, &env{repo: e.repo, policy: policy, store: e.store}, commit, stderr)
-	if err != nil {
-		return 0, err
-	}
 	if *share {
+		ids, err := pushIDs(ctx, &env{repo: e.repo, policy: policy, store: e.store}, commit, stderr)
+		if err != nil {
+			return 0, err
+		}
 		return pushShare(ctx, shared, ids, commit, stderr)
 	}
-	if shared != nil {
-		// A record only the share store holds is shared already, and has
-		// no ref here to push.
-		var here []string
-		for _, id := range ids {
-			if _, err := own.Get(ctx, id); err == nil {
-				here = append(here, id)
-			}
-		}
-		ids = here
+	// A git push sends refs from this repository's own store, so it plans
+	// against that store alone: a record only the share store holds is
+	// shared already, and the share store is never read (or warned about).
+	ids, err := pushIDs(ctx, &env{repo: e.repo, policy: policy, store: own}, commit, stderr)
+	if err != nil {
+		return 0, err
 	}
 	if len(ids) == 0 {
 		fmt.Fprintf(stderr, "prove: no records for %s to push\n", short(commit))
