@@ -49,5 +49,8 @@ Everything on `main` so far; nothing has been released yet.
 
 - With no key configured, prove names the `~/.ssh` key it falls back to,
   and refuses that fallback when `CI=true`.
+- `golang.org/x/crypto` is v0.55.0, which fixes three vulnerabilities the
+  signer can reach (GO-2025-4116, GO-2026-5018, GO-2026-5019). prove now
+  needs Go 1.25 and builds with Go 1.25.14.
 
 [Unreleased]: https://github.com/jayehmke/prove/commits/main
