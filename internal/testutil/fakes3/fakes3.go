@@ -1,4 +1,5 @@
-package s3
+// Package fakes3 is an in-process S3 for tests.
+package fakes3
 
 import (
 	"encoding/xml"
@@ -12,9 +13,9 @@ import (
 	"testing"
 )
 
-// fakeS3 is an in-process S3 with path-style addressing: PutObject (with
+// Server is an in-process S3 with path-style addressing: PutObject (with
 // If-None-Match: *), GetObject, HeadObject and ListObjectsV2, paged.
-type fakeS3 struct {
+type Server struct {
 	bucket string
 	// accessKey must appear in every request's signature.
 	accessKey string
@@ -22,16 +23,19 @@ type fakeS3 struct {
 
 	mu      sync.Mutex
 	objects map[string][]byte
-	// overwrites lists keys a PUT replaced. S3 with versioning keeps the
+	// Overwrites lists keys a PUT replaced. S3 with versioning keeps the
 	// old version, but prove must never ask it to.
-	overwrites []string
-	// unconditional lists PUTs sent without If-None-Match: *.
-	unconditional []string
+	Overwrites []string
+	// Unconditional lists PUTs sent without If-None-Match: *.
+	Unconditional []string
 	errors        []string
 }
 
-func newFakeS3(t *testing.T, bucket, accessKey string) (*fakeS3, string) {
-	f := &fakeS3{bucket: bucket, accessKey: accessKey, pageSize: 3, objects: map[string][]byte{}}
+// New starts a fake S3 holding one empty bucket, which accepts only
+// requests signed with accessKey, and returns it and its endpoint URL. A
+// request it does not expect fails the test.
+func New(t *testing.T, bucket, accessKey string) (*Server, string) {
+	f := &Server{bucket: bucket, accessKey: accessKey, pageSize: 3, objects: map[string][]byte{}}
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)
 	t.Cleanup(func() {
@@ -44,14 +48,23 @@ func newFakeS3(t *testing.T, bucket, accessKey string) (*fakeS3, string) {
 	return f, srv.URL
 }
 
-func (f *fakeS3) object(key string) ([]byte, bool) {
+// Object returns the object at key.
+func (f *Server) Object(key string) ([]byte, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	data, ok := f.objects[key]
 	return data, ok
 }
 
-func (f *fakeS3) keys() []string {
+// Put stores an object directly, as another writer would.
+func (f *Server) Put(key string, data []byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.objects[key] = data
+}
+
+// Keys returns every key, sorted.
+func (f *Server) Keys() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []string
@@ -88,7 +101,8 @@ type listResult struct {
 	} `xml:"Contents"`
 }
 
-func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+// ServeHTTP answers one S3 request.
+func (f *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if !strings.Contains(r.Header.Get("Authorization"), "Credential="+f.accessKey+"/") {
@@ -113,13 +127,13 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		_, exists := f.objects[key]
 		if r.Header.Get("If-None-Match") != "*" {
-			f.unconditional = append(f.unconditional, key)
+			f.Unconditional = append(f.Unconditional, key)
 		} else if exists {
 			fail(w, http.StatusPreconditionFailed, "PreconditionFailed")
 			return
 		}
 		if exists {
-			f.overwrites = append(f.overwrites, key)
+			f.Overwrites = append(f.Overwrites, key)
 		}
 		f.objects[key] = body
 		w.Header().Set("ETag", `"`+strconv.Itoa(len(f.objects))+`"`)

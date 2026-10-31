@@ -11,6 +11,7 @@ import (
 
 	"github.com/jayehmke/prove/internal/config"
 	"github.com/jayehmke/prove/internal/gitx"
+	"github.com/jayehmke/prove/internal/record"
 	"github.com/jayehmke/prove/internal/store"
 	"github.com/jayehmke/prove/internal/verify"
 )
@@ -154,13 +155,17 @@ func cmdPush(ctx context.Context, args []string, stdout, stderr io.Writer) (int,
 	fs := flag.NewFlagSet("push", flag.ContinueOnError)
 	rev := fs.String("commit", "HEAD", "")
 	prefix := fs.String("as-branch", "", "")
+	share := fs.Bool("share", false, "")
 	onto := fs.String("onto", "", "")
 	pos, rest, err := parse(fs, args)
 	if err != nil {
 		return 0, err
 	}
 	if rest != nil || len(pos) > 1 {
-		return 0, usageError{"push is: prove push [remote] [--commit <rev>] [--as-branch <prefix>] [--onto <ref>]"}
+		return 0, usageError{"push is: prove push [remote] [--commit <rev>] [--as-branch <prefix>] [--onto <ref>], or prove push --share [--commit <rev>] [--onto <ref>]"}
+	}
+	if *share && (len(pos) > 0 || *prefix != "") {
+		return 0, usageError{"prove push --share copies records into the share store, so it takes no remote and no --as-branch"}
 	}
 	remote := "origin"
 	if len(pos) == 1 {
@@ -170,8 +175,13 @@ func cmdPush(ctx context.Context, args []string, stdout, stderr io.Writer) (int,
 	if err != nil {
 		return 0, err
 	}
-	if _, ok := e.store.(*store.Git); !ok {
-		return 0, fmt.Errorf("prove push shares records kept in the git store; this repository uses the %s", e.store.Name())
+	shared, _ := e.store.(*store.Shared)
+	if *share && shared == nil {
+		return 0, usageError{fmt.Sprintf("prove push --share needs a share store in %s (share: {type: s3, options: ...})", config.FileName)}
+	}
+	own := store.OwnStore(e.store)
+	if _, ok := own.(*store.Git); !ok && !*share {
+		return 0, fmt.Errorf("prove push shares records kept in the git store; this repository uses the %s", own.Name())
 	}
 	commit, err := target(ctx, e.repo, *rev, *onto, stderr)
 	if err != nil {
@@ -187,6 +197,20 @@ func cmdPush(ctx context.Context, args []string, stdout, stderr io.Writer) (int,
 	ids, err := pushIDs(ctx, &env{repo: e.repo, policy: policy, store: e.store}, commit, stderr)
 	if err != nil {
 		return 0, err
+	}
+	if *share {
+		return pushShare(ctx, shared, ids, commit, stderr)
+	}
+	if shared != nil {
+		// A record only the share store holds is shared already, and has
+		// no ref here to push.
+		var here []string
+		for _, id := range ids {
+			if _, err := own.Get(ctx, id); err == nil {
+				here = append(here, id)
+			}
+		}
+		ids = here
 	}
 	if len(ids) == 0 {
 		fmt.Fprintf(stderr, "prove: no records for %s to push\n", short(commit))
@@ -206,6 +230,45 @@ func cmdPush(ctx context.Context, args []string, stdout, stderr io.Writer) (int,
 	fmt.Fprintf(stderr, "prove: pushing %d record(s) for %s to %s\n", len(ids), short(commit), remote)
 	if err := gitPush(ctx, e.repo, remote, refspecs, stdout, stderr); err != nil {
 		return 0, err
+	}
+	return exitOK, nil
+}
+
+// pushShare copies the records of ids into the share store: the exact
+// bytes, with meta read from each record, and no git push, so no ref or
+// branch is made anywhere. The share store never replaces a record it
+// has. A record that can't be copied is reported and the push still
+// succeeds: a verifier that lacks it runs that check, so a missing record
+// can never make a check pass.
+func pushShare(ctx context.Context, s *store.Shared, ids []string, commit string, stderr io.Writer) (int, error) {
+	if len(ids) == 0 {
+		fmt.Fprintf(stderr, "prove: no records for %s to share\n", short(commit))
+		return exitOK, nil
+	}
+	fmt.Fprintf(stderr, "prove: sharing %d record(s) for %s in the %s\n", len(ids), short(commit), s.Share.Name())
+	failed := 0
+	for _, id := range ids {
+		err := func() error {
+			data, err := s.Get(ctx, id)
+			if err != nil {
+				return err
+			}
+			if got := record.ID(data); got != id {
+				return fmt.Errorf("its bytes hash to %s", short(got))
+			}
+			meta, err := store.MetaOf(data)
+			if err != nil {
+				return err
+			}
+			return s.Share.Put(ctx, meta, data)
+		}()
+		if err != nil {
+			failed++
+			fmt.Fprintf(stderr, "prove: could not share record %s: %v\n", short(id), err)
+		}
+	}
+	if failed > 0 {
+		fmt.Fprintf(stderr, "prove: %d of %d record(s) not shared; a verifier without them runs those checks\n", failed, len(ids))
 	}
 	return exitOK, nil
 }

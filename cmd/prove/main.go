@@ -53,6 +53,8 @@ Usage:
                                          push the records a verifier of the commit needs
                                          (default origin, HEAD); --as-branch pushes each
                                          as refs/heads/<prefix>-prove-<id>
+      --share             copy them into the share store from .prove.yaml
+                          instead: no git push, no ref, no branch
       --onto <ref>        judge the commit merged into ref (a pull request
                           against its base), not the commit alone
   prove version
@@ -125,11 +127,7 @@ func load(ctx context.Context) (*env, error) {
 	if err != nil {
 		return nil, err
 	}
-	var sc config.StoreConfig
-	if policy != nil {
-		sc = policy.Store
-	}
-	st, err := store.Open(ctx, sc, repo)
+	st, err := store.ForPolicy(ctx, policy, repo)
 	if err != nil {
 		return nil, err
 	}
@@ -158,11 +156,7 @@ func (e *env) at(ctx context.Context, rev string) (*env, func(), error) {
 	if err != nil {
 		return fail(err)
 	}
-	var sc config.StoreConfig
-	if policy != nil {
-		sc = policy.Store
-	}
-	st, err := store.Open(ctx, sc, e.repo)
+	st, err := store.ForPolicy(ctx, policy, e.repo)
 	if err != nil {
 		return fail(err)
 	}

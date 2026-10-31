@@ -30,6 +30,7 @@ requirements:
   required: [AC-12-1, AC-12-2]
 
 store: git      # git (default), local, s3, or another adapter; see below
+share: s3       # optional: where prove push --share copies records; see below
 sample: 0       # percent of checks `prove verify` reruns by default
 ```
 
@@ -115,6 +116,32 @@ store:
 | `local` | A folder, `path:` (default `.git/prove/records`). |
 | `s3` | An S3 bucket, with `prove-store-s3`. See [adapters.md](adapters.md#s3). |
 | anything else | The `prove-store-<type>` adapter on `PATH`, given `options:`. |
+
+## share
+
+A second store, for hosts where records can't be pushed as git refs (a
+Claude Code cloud session can push only branches, say). It takes the same
+form as `store`, of any type but `git`:
+
+```yaml
+share:
+  type: s3
+  options:
+    bucket: my-prove-records
+    region: us-east-1
+```
+
+- `prove push --share` copies the records a verifier of the commit needs
+  into it: the exact bytes, with no git push, so no ref or branch is made.
+  It never replaces a record the share store has. A record it can't copy
+  is reported, and the push still succeeds: a verifier without that record
+  runs the check.
+- `prove verify`, `plan`, `show` and `run --stale` read it together with
+  `store`. Records are still written to `store` only.
+- The share store is untrusted, like any store: verify checks every
+  record's signature. If it can't be read (no credentials on this machine,
+  say), prove warns once and goes on without it, so a check whose record
+  is only there runs instead of passing.
 
 ## sample
 

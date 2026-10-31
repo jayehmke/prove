@@ -76,6 +76,24 @@ func checkID(id string) error {
 	return nil
 }
 
+// ForPolicy returns the store a policy reads and writes: its store, read
+// together with its share store when it names one. A nil policy uses the
+// git store.
+func ForPolicy(ctx context.Context, policy *config.Config, repo *gitx.Repo) (Store, error) {
+	if policy == nil {
+		return NewGit(repo), nil
+	}
+	own, err := Open(ctx, policy.Store, repo)
+	if err != nil || policy.Share.Type == "" {
+		return own, err
+	}
+	share, err := Open(ctx, policy.Share, repo)
+	if err != nil {
+		return nil, err
+	}
+	return NewShared(own, share), nil
+}
+
 // Open returns the store a policy names. The default is the git store.
 func Open(ctx context.Context, cfg config.StoreConfig, repo *gitx.Repo) (Store, error) {
 	switch cfg.Type {

@@ -195,12 +195,22 @@ store:
     # path_style: true                       # most of those need it
 ```
 
-Each record is `<prefix>/<commit>/<signer>/<check>.json`, the record bytes
-exactly as signed, and `<prefix>/index/<id>.json` points to it with its
-meta. Every write is conditional (`If-None-Match: *`), so the adapter never
-replaces an object: a rerun of the same check by the same signer on the
-same commit goes to `<check>.2.json`, then `<check>.3.json`. Turn on
-versioning on the bucket too, so nothing else can destroy a record either.
+Each record is `<prefix>/<check>/<fingerprint>/<id>.json`, the record
+bytes exactly as signed, and `<prefix>/index/<id>.json` points to it with
+its meta. Records are keyed by what the check ran on (its command and
+inputs), not by commit, so a record reused on a later commit, or on a
+pull request's squash merge, is the same object. Every write is
+conditional (`If-None-Match: *`), so the adapter never replaces an
+object: if another object already holds a record's key, the record goes
+to `<id>.2.json`, then `<id>.3.json`. Turn on versioning on the bucket
+too, so nothing else can destroy a record either. Records written with
+the earlier `<prefix>/<commit>/<signer>/<check>.json` keys are still read,
+through their index entries.
+
+To keep records in git and share them through a bucket (for a host that
+accepts only branch pushes), name the bucket under `share:` instead of
+`store:`, and copy records into it with `prove push --share`; see
+[policy.md](policy.md#share).
 
 Credentials come from the standard AWS chain: environment variables,
 shared config and SSO profiles, web identity (OIDC from CI), and instance
