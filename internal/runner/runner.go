@@ -84,30 +84,46 @@ func summarize(paths []string) string {
 // dirty working tree. A check whose command fails is still recorded, with
 // result "fail".
 func Run(ctx context.Context, o Options) (*Outcome, error) {
-	if err := CheckClean(ctx, o.Repo); err != nil {
+	res, err := Execute(ctx, o.Repo, o.Check, o.Requirements, o.Stdout, o.Stderr)
+	if err != nil {
 		return nil, err
 	}
-	commit, err := o.Repo.ResolveCommit(ctx, "HEAD")
+	return Sign(ctx, o.Repo, o.Store, o.Signer, o.Check, res.Commit, *res)
+}
+
+// Result is what a run hands to prove sign. Repo code can rewrite it, so
+// prove sign takes only the run's own facts from it and computes the rest
+// from git and the policy.
+type Result struct {
+	Check       string        `json:"check"`
+	Commit      string        `json:"commit"`      // consistency: must equal the commit sign signs for
+	Fingerprint string        `json:"fingerprint"` // consistency: must equal sign's own computation
+	ExitCode    int           `json:"exitCode"`
+	StartedAt   time.Time     `json:"startedAt"`
+	FinishedAt  time.Time     `json:"finishedAt"`
+	Tests       []record.Test `json:"tests,omitempty"`
+	JUnitError  string        `json:"junitError,omitempty"`
+}
+
+// Execute runs the check on HEAD and returns its result. It refuses a dirty
+// working tree, and a check that moves HEAD or changes the tree.
+func Execute(ctx context.Context, repo *gitx.Repo, check config.Check, requirements *regexp.Regexp, stdout, stderr io.Writer) (*Result, error) {
+	if err := CheckClean(ctx, repo); err != nil {
+		return nil, err
+	}
+	commit, err := repo.ResolveCommit(ctx, "HEAD")
 	if err != nil {
 		return nil, gitx.ErrNoCommits
 	}
-	tree, err := o.Repo.TreeOf(ctx, commit)
-	if err != nil {
-		return nil, err
-	}
-	check := o.Check
-	if len(check.Inputs) == 0 {
-		check.Inputs = config.DefaultInputs
-	}
-	fp, err := fingerprint.Compute(ctx, o.Repo, tree, fingerprint.Spec{Command: check.Run, Inputs: check.Inputs, Lockfiles: check.Lockfiles})
+	_, fp, err := fingerprintAt(ctx, repo, commit, check)
 	if err != nil {
 		return nil, err
 	}
 
 	var junitPath string
 	if check.JUnit != "" {
-		junitPath = filepath.Join(o.Repo.Dir, filepath.FromSlash(check.JUnit))
-		if _, err := o.Repo.Git(ctx, "ls-files", "--error-unmatch", "--", check.JUnit); err == nil {
+		junitPath = filepath.Join(repo.Dir, filepath.FromSlash(check.JUnit))
+		if _, err := repo.Git(ctx, "ls-files", "--error-unmatch", "--", check.JUnit); err == nil {
 			return nil, fmt.Errorf("check %s: junit path %s is a committed file; point it at an ignored path", check.Name, check.JUnit)
 		}
 		// A report left by an earlier run must not be read as this run's.
@@ -117,67 +133,110 @@ func Run(ctx context.Context, o Options) (*Outcome, error) {
 	}
 
 	started := time.Now().UTC()
-	code, err := Exec(ctx, o.Repo.Dir, check.Run, o.Stdout, o.Stderr, []string{"PROVE_CHECK=" + check.Name})
+	code, err := Exec(ctx, repo.Dir, check.Run, stdout, stderr, []string{"PROVE_CHECK=" + check.Name})
 	if err != nil {
 		return nil, err
 	}
 	finished := time.Now().UTC()
 	// The record claims the committed tree passed, so the command must have
 	// run on exactly that tree: HEAD unmoved and nothing changed.
-	if after, err := o.Repo.ResolveCommit(ctx, "HEAD"); err != nil || after != commit {
+	if after, err := repo.ResolveCommit(ctx, "HEAD"); err != nil || after != commit {
 		moved := "nowhere"
 		if err == nil {
 			moved = short(after)
 		}
 		return nil, fmt.Errorf("the check moved HEAD (%s -> %s), so it did not test the committed code: no record stored. A check must not commit, check out or reset", short(commit), moved)
 	}
-	if dirty, err := o.Repo.DirtyPaths(ctx); err != nil {
+	if dirty, err := repo.DirtyPaths(ctx); err != nil {
 		return nil, err
 	} else if len(dirty) > 0 {
 		return nil, fmt.Errorf("the check changed the working tree (%s), so it did not test the committed code: no record stored. Make it leave tracked files alone and git-ignore what it writes", summarize(dirty))
 	}
 
-	pred := record.Predicate{
-		Check:       check.Name,
-		Command:     check.Run,
-		Inputs:      check.Inputs,
-		Lockfiles:   check.Lockfiles,
-		Fingerprint: fp,
-		ExitCode:    code,
-		Result:      record.Pass,
-		StartedAt:   started,
-		FinishedAt:  finished,
-		Signer:      o.Signer.Identity(),
-		Runner:      record.Runner{Prove: Version, OS: runtime.GOOS, Arch: runtime.GOARCH},
-	}
-	if code != 0 {
-		pred.Result = record.Fail
-	}
+	res := &Result{Check: check.Name, Commit: commit, Fingerprint: fp, ExitCode: code, StartedAt: started, FinishedAt: finished}
 	if junitPath != "" {
 		data, err := os.ReadFile(junitPath)
 		if err == nil {
-			pred.Tests, err = junit.Parse(data, o.Requirements)
+			res.Tests, err = junit.Parse(data, requirements)
 		}
 		if err != nil {
-			pred.JUnitError = fmt.Sprintf("reading %s: %v", check.JUnit, err)
-			fmt.Fprintf(o.Stderr, "prove: %s: %s\n", check.Name, pred.JUnitError)
+			res.JUnitError = fmt.Sprintf("reading %s: %v", check.JUnit, err)
+			fmt.Fprintf(stderr, "prove: %s: %s\n", check.Name, res.JUnitError)
 		}
 	}
+	return res, nil
+}
 
-	st := record.New(commit, tree, pred)
-	data, err := record.Seal(st, o.Signer)
+// Sign stores a signed record of res, a run of check on commit. It runs
+// nothing. The record's tree, fingerprint, command, inputs and lockfiles
+// come from git and check; only the exit code, times and tests come from
+// res. It refuses a result of another check or commit, or one whose
+// fingerprint is not check's on commit.
+func Sign(ctx context.Context, repo *gitx.Repo, st store.Store, s signer.Signer, check config.Check, commit string, res Result) (*Outcome, error) {
+	if res.Check != check.Name {
+		return nil, fmt.Errorf("the result is of check %q, not %q", res.Check, check.Name)
+	}
+	if res.Commit != commit {
+		return nil, fmt.Errorf("the result is of commit %s, not %s, the commit being signed", short(res.Commit), short(commit))
+	}
+	tree, fp, err := fingerprintAt(ctx, repo, commit, check)
+	if err != nil {
+		return nil, err
+	}
+	if res.Fingerprint != fp {
+		return nil, fmt.Errorf("the result's fingerprint %s is not %s, the check's on %s: the run had another command or inputs", res.Fingerprint, fp, short(commit))
+	}
+
+	pred := record.Predicate{
+		Check:       check.Name,
+		Command:     check.Run,
+		Inputs:      inputs(check),
+		Lockfiles:   check.Lockfiles,
+		Fingerprint: fp,
+		ExitCode:    res.ExitCode,
+		Result:      record.Pass,
+		StartedAt:   res.StartedAt,
+		FinishedAt:  res.FinishedAt,
+		Signer:      s.Identity(),
+		Tests:       res.Tests,
+		JUnitError:  res.JUnitError,
+		Runner:      record.Runner{Prove: Version, OS: runtime.GOOS, Arch: runtime.GOARCH},
+	}
+	if res.ExitCode != 0 {
+		pred.Result = record.Fail
+	}
+	stmt := record.New(commit, tree, pred)
+	data, err := record.Seal(stmt, s)
 	if err != nil {
 		return nil, err
 	}
 	id := record.ID(data)
 	meta := store.Meta{
 		ID: id, Check: check.Name, Commit: commit, Tree: tree, Signer: pred.Signer,
-		Fingerprint: fp, Result: pred.Result, FinishedAt: finished,
+		Fingerprint: fp, Result: pred.Result, FinishedAt: pred.FinishedAt,
 	}
-	if err := o.Store.Put(ctx, meta, data); err != nil {
-		return nil, fmt.Errorf("storing record in %s: %w", o.Store.Name(), err)
+	if err := st.Put(ctx, meta, data); err != nil {
+		return nil, fmt.Errorf("storing record in %s: %w", st.Name(), err)
 	}
-	return &Outcome{ID: id, Statement: st}, nil
+	return &Outcome{ID: id, Statement: stmt}, nil
+}
+
+// fingerprintAt returns commit's tree and check's fingerprint on it, read
+// from git objects only.
+func fingerprintAt(ctx context.Context, repo *gitx.Repo, commit string, check config.Check) (tree, fp string, err error) {
+	tree, err = repo.TreeOf(ctx, commit)
+	if err != nil {
+		return "", "", err
+	}
+	fp, err = fingerprint.Compute(ctx, repo, tree, fingerprint.Spec{Command: check.Run, Inputs: inputs(check), Lockfiles: check.Lockfiles})
+	return tree, fp, err
+}
+
+func inputs(c config.Check) []string {
+	if len(c.Inputs) == 0 {
+		return config.DefaultInputs
+	}
+	return c.Inputs
 }
 
 // Exec runs a shell command in dir and returns its exit code. A command
