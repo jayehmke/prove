@@ -2,7 +2,9 @@
 package runner
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -103,6 +105,22 @@ type Result struct {
 	FinishedAt  time.Time     `json:"finishedAt"`
 	Tests       []record.Test `json:"tests,omitempty"`
 	JUnitError  string        `json:"junitError,omitempty"`
+}
+
+// ParseResult reads a Result a run wrote. A field Result does not have,
+// such as "command" or "signer", is refused rather than ignored: whoever
+// wrote it expected it to count.
+func ParseResult(data []byte) (Result, error) {
+	var r Result
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&r); err != nil {
+		return Result{}, fmt.Errorf("not a prove run result: %w", err)
+	}
+	if dec.More() {
+		return Result{}, errors.New("not a prove run result: more data after it")
+	}
+	return r, nil
 }
 
 // Execute runs the check on HEAD and returns its result. It refuses a dirty

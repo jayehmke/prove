@@ -47,6 +47,13 @@ Usage:
       --input <glob>      an input file glob (repeatable; default: the whole repo)
       --lockfile <glob>   a lockfile glob (repeatable)
       --junit <path>      JUnit XML report the command writes
+  prove sign <dir> [--commit <rev>] [--checkout-policy]
+                                         sign the results run --unsigned wrote to dir,
+                                         running nothing: each record's tree, command,
+                                         inputs and fingerprint come from git and the
+                                         policy, and only the exit code, times and tests
+                                         from the result. --commit and --checkout-policy
+                                         as for run
   prove verify [commit] [--sample <pct>] [--format text|json] [--onto <ref>]
                                          check every policy check of a commit (default HEAD)
   prove show [commit] [--format md|json] [--onto <ref>]
@@ -81,6 +88,8 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "run":
 		code, err = cmdRun(ctx, args[1:], stdout, stderr)
+	case "sign":
+		code, err = cmdSign(ctx, args[1:], stderr)
 	case "verify":
 		code, err = cmdVerify(ctx, args[1:], stdout, stderr)
 	case "show":
@@ -165,6 +174,25 @@ func (e *env) at(ctx context.Context, rev string) (*env, func(), error) {
 		return fail(err)
 	}
 	return &env{repo: repo, policy: policy, store: st}, cleanup, nil
+}
+
+// forCommit is e.at for rev, or with onto, rev merged into onto (see
+// target). With checkoutPolicy, the policy and store stay e's.
+func (e *env) forCommit(ctx context.Context, rev, onto string, checkoutPolicy bool, stderr io.Writer) (*env, func(), error) {
+	commit, err := target(ctx, e.repo, rev, onto, stderr)
+	if err != nil {
+		return nil, nil, err
+	}
+	at, cleanup, err := e.at(ctx, commit)
+	if err != nil {
+		return nil, nil, err
+	}
+	if checkoutPolicy {
+		// Run and sign the checks as prove verify here will judge them, so
+		// --stale and the records made agree with that verify.
+		at.policy, at.store = e.policy, e.store
+	}
+	return at, cleanup, nil
 }
 
 // target resolves rev, or with onto, the commit that merging rev into onto
@@ -296,20 +324,11 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (int, 
 		*rev = "HEAD"
 	}
 	if *rev != "" {
-		commit, err := target(ctx, e.repo, *rev, *onto, stderr)
-		if err != nil {
-			return 0, err
-		}
-		at, cleanup, err := e.at(ctx, commit)
+		at, cleanup, err := e.forCommit(ctx, *rev, *onto, *here, stderr)
 		if err != nil {
 			return 0, err
 		}
 		defer cleanup()
-		if *here {
-			// Run the checks as prove verify here will judge them, so
-			// --stale and the records it makes agree with that verify.
-			at.policy, at.store = e.policy, e.store
-		}
 		e = at
 	} else if err := runner.CheckClean(ctx, e.repo); err != nil {
 		// Refuse a dirty tree before anything else, so nothing is run or stored.
@@ -416,12 +435,18 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (int, 
 		if err != nil {
 			return 0, fmt.Errorf("%s: %w", c.Name, err)
 		}
-		p := out.Statement.Predicate
-		fmt.Fprintf(stderr, "prove: %s %s (exit %d), signed by %s, record %s in the %s\n",
-			c.Name, p.Result, p.ExitCode, p.Signer, out.ID[:12], e.store.Name())
-		if p.ExitCode != 0 {
+		if reportSigned(stderr, out, e.store) {
 			code = exitFail
 		}
 	}
 	return code, nil
+}
+
+// reportSigned prints the line for a stored record and reports whether its
+// check failed.
+func reportSigned(w io.Writer, out *runner.Outcome, st store.Store) (failed bool) {
+	p := out.Statement.Predicate
+	fmt.Fprintf(w, "prove: %s %s (exit %d), signed by %s, record %s in the %s\n",
+		p.Check, p.Result, p.ExitCode, p.Signer, out.ID[:12], st.Name())
+	return p.ExitCode != 0
 }

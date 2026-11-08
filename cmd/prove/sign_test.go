@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jayehmke/prove/internal/gitx"
+	"github.com/jayehmke/prove/internal/record"
 	"github.com/jayehmke/prove/internal/runner"
 	"github.com/jayehmke/prove/internal/testutil"
 )
@@ -197,6 +199,226 @@ done
 		}
 		if recs := records(t, repo, testutil.Head(t, repo)); len(recs) != 1 {
 			t.Fatalf("the signed run stored %d records, want 1", len(recs))
+		}
+	})
+}
+
+// unsignedRun runs prove run --unsigned with no key in the environment and
+// returns the results folder.
+func unsignedRun(t *testing.T, want int, args ...string) string {
+	t.Helper()
+	noKey(t)
+	out := filepath.Join(t.TempDir(), "results")
+	if code, _, errOut := prove(t, append([]string{"run", "--unsigned", "--out", out}, args...)...); code != want {
+		t.Fatalf("run --unsigned exited %d, want %d:\n%s", code, want, errOut)
+	}
+	return out
+}
+
+// editResult rewrites the JSON of a result file.
+func editResult(t *testing.T, path string, edit func(map[string]any)) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	edit(m)
+	if data, err = json.Marshal(m); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSignMatchesASignedRun(t *testing.T) {
+	t.Run("FLU-937 run --unsigned then sign makes a record prove verify accepts, binding what a plain prove run of the commit binds", func(t *testing.T) {
+		repo, key := setup(t, `
+signers:
+  tester: $TESTER
+checks:
+  - name: unit
+    run: "test -f src/a.go"
+    inputs: ["src/**"]
+    lockfiles: ["go.sum"]
+`)
+		testutil.WriteFile(t, repo, "src/a.go", "package a\n")
+		testutil.WriteFile(t, repo, "go.sum", "lock\n")
+		head := testutil.Commit(t, repo, "src")
+		out := unsignedRun(t, 0)
+
+		t.Setenv("PROVE_SSH_KEY", key.Path)
+		if code, _, errOut := prove(t, "sign", out); code != 0 || !strings.Contains(errOut, "unit pass (exit 0), signed by ") {
+			t.Fatalf("prove sign exited %d:\n%s", code, errOut)
+		}
+		if code, verifyOut, _ := prove(t, "verify"); code != 0 {
+			t.Fatalf("prove verify of the signed result exited %d:\n%s", code, verifyOut)
+		}
+		recs := records(t, repo, head)
+		if len(recs) != 1 {
+			t.Fatalf("sign stored %d records, want 1", len(recs))
+		}
+		signed := recs[0]
+		if signed.Tree() != testutil.Tree(t, repo, head) || signed.Commit() != head || signed.Predicate.Command != "test -f src/a.go" {
+			t.Fatalf("signed record is of tree %s commit %s command %q, want HEAD's and the policy's", signed.Tree(), signed.Commit(), signed.Predicate.Command)
+		}
+
+		if code, _, errOut := prove(t, "run"); code != 0 {
+			t.Fatalf("prove run exited %d:\n%s", code, errOut)
+		}
+		recs = records(t, repo, head)
+		if len(recs) != 2 {
+			t.Fatalf("want the signed and the plain record, got %d", len(recs))
+		}
+		plain := recs[0]
+		if plain.Predicate.StartedAt.Equal(signed.Predicate.StartedAt) {
+			plain = recs[1]
+		}
+		s, p := signed.Predicate, plain.Predicate
+		if signed.Tree() != plain.Tree() || signed.Commit() != plain.Commit() || s.Fingerprint != p.Fingerprint ||
+			s.ExitCode != p.ExitCode || s.Check != p.Check || s.Command != p.Command ||
+			!slices.Equal(s.Inputs, p.Inputs) || !slices.Equal(s.Lockfiles, p.Lockfiles) {
+			t.Fatalf("signed record binds\n%+v\nbut a plain run binds\n%+v", s, p)
+		}
+	})
+}
+
+func TestSignRunsNothing(t *testing.T) {
+	t.Run("FLU-937 sign runs no check command, even with a policy that samples every check", func(t *testing.T) {
+		ran := filepath.Join(t.TempDir(), "ran")
+		repo, key := setup(t, `
+sample: 100
+signers:
+  tester: $TESTER
+checks:
+  - name: unit
+    run: "echo ran >> '`+ran+`'"
+`)
+		lines := func() int {
+			data, _ := os.ReadFile(ran)
+			return strings.Count(string(data), "\n")
+		}
+		out := unsignedRun(t, 0)
+		if n := lines(); n != 1 {
+			t.Fatalf("the run ran the check %d times, want 1", n)
+		}
+		t.Setenv("PROVE_SSH_KEY", key.Path)
+		if code, _, errOut := prove(t, "sign", out); code != 0 {
+			t.Fatalf("prove sign exited %d:\n%s", code, errOut)
+		}
+		if n := lines(); n != 1 {
+			t.Fatalf("prove sign ran the check: it has run %d times", n)
+		}
+		if recs := records(t, repo, testutil.Head(t, repo)); len(recs) != 1 {
+			t.Fatalf("sign stored %d records, want 1", len(recs))
+		}
+	})
+
+	t.Run("FLU-937 sign of an empty results folder (--stale found nothing to run) loads no key", func(t *testing.T) {
+		setup(t, runPolicy)
+		if code, _, errOut := prove(t, "run"); code != 0 {
+			t.Fatalf("prove run exited %d:\n%s", code, errOut)
+		}
+		t.Setenv("CI", "true")
+		out := unsignedRun(t, 0, "--stale")
+		if got := dirNames(t, out); len(got) != 0 {
+			t.Fatalf("nothing was stale, yet the results folder holds %v", got)
+		}
+		if code, _, errOut := prove(t, "sign", out); code != 0 {
+			t.Fatalf("prove sign of no results with no key exited %d:\n%s", code, errOut)
+		}
+	})
+}
+
+func TestSignRefusesResults(t *testing.T) {
+	const policy = `
+signers:
+  tester: $TESTER
+checks:
+  - name: unit
+    run: "true"
+    inputs: ["src/**"]
+  - name: lint
+    run: "true"
+`
+	for _, tc := range []struct {
+		name string
+		// tamper changes the results folder or the repository after the
+		// run and returns what the refusal must say.
+		tamper func(t *testing.T, repo *gitx.Repo, out string) string
+	}{
+		{"FLU-937 a result of another commit", func(t *testing.T, repo *gitx.Repo, out string) string {
+			ran := testutil.Head(t, repo)
+			testutil.WriteFile(t, repo, "docs/notes.md", "not an input of unit\n")
+			now := testutil.Commit(t, repo, "docs")
+			return short(ran) + ", not " + short(now)
+		}},
+		{"FLU-937 a check not in the policy", func(t *testing.T, repo *gitx.Repo, out string) string {
+			editResult(t, filepath.Join(out, "unit.json"), func(m map[string]any) { m["check"] = "ghost" })
+			if err := os.Rename(filepath.Join(out, "unit.json"), filepath.Join(out, "ghost.json")); err != nil {
+				t.Fatal(err)
+			}
+			return `no check "ghost"`
+		}},
+		{"FLU-937 a result filed under another check's name", func(t *testing.T, repo *gitx.Repo, out string) string {
+			if err := os.Rename(filepath.Join(out, "unit.json"), filepath.Join(out, "lint.json")); err != nil {
+				t.Fatal(err)
+			}
+			return `of check "unit", not "lint"`
+		}},
+		{"FLU-937 a changed fingerprint", func(t *testing.T, repo *gitx.Repo, out string) string {
+			forged := "sha256:" + strings.Repeat("0", 64)
+			editResult(t, filepath.Join(out, "unit.json"), func(m map[string]any) { m["fingerprint"] = forged })
+			return "fingerprint " + forged
+		}},
+		{"FLU-937 an unknown field: command", func(t *testing.T, repo *gitx.Repo, out string) string {
+			editResult(t, filepath.Join(out, "unit.json"), func(m map[string]any) { m["command"] = "true" })
+			return `unknown field "command"`
+		}},
+		{"FLU-937 an unknown field: signer", func(t *testing.T, repo *gitx.Repo, out string) string {
+			editResult(t, filepath.Join(out, "unit.json"), func(m map[string]any) { m["signer"] = "ci" })
+			return `unknown field "signer"`
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, key := setup(t, policy)
+			ran := testutil.Head(t, repo)
+			out := unsignedRun(t, 0, "unit")
+			why := tc.tamper(t, repo, out)
+			t.Setenv("PROVE_SSH_KEY", key.Path)
+			code, _, errOut := prove(t, "sign", out)
+			if code != 2 || !strings.Contains(errOut, why) {
+				t.Fatalf("prove sign exited %d, want 2 saying %q:\n%s", code, why, errOut)
+			}
+			for _, commit := range []string{ran, testutil.Head(t, repo)} {
+				if recs := records(t, repo, commit); len(recs) != 0 {
+					t.Fatalf("a refused sign stored %d records for %s", len(recs), short(commit))
+				}
+			}
+		})
+	}
+
+	t.Run("FLU-937 sign signs an edited exitCode as written: the exit code is the run's own fact", func(t *testing.T) {
+		repo, key := setup(t, `
+signers:
+  tester: $TESTER
+checks:
+  - name: unit
+    run: "exit 1"
+`)
+		out := unsignedRun(t, 1)
+		editResult(t, filepath.Join(out, "unit.json"), func(m map[string]any) { m["exitCode"] = 0 })
+		t.Setenv("PROVE_SSH_KEY", key.Path)
+		if code, _, errOut := prove(t, "sign", out); code != 0 {
+			t.Fatalf("prove sign exited %d:\n%s", code, errOut)
+		}
+		recs := records(t, repo, testutil.Head(t, repo))
+		if len(recs) != 1 || recs[0].Predicate.ExitCode != 0 || recs[0].Predicate.Result != record.Pass {
+			t.Fatalf("want one record of exit 0, pass, as the result says; got %d records", len(recs))
 		}
 	})
 }
