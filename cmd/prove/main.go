@@ -39,10 +39,22 @@ Usage:
                           verify reads here), not the commit's
       --onto <ref>        run on the commit (default HEAD) merged into ref,
                           as a pull request's CI tests it
+      --unsigned --out <dir>
+                          load no signing key: write each check's result to
+                          <dir>/<check>.json for prove sign, store no record.
+                          Refused with PROVE_SSH_KEY, PROVE_SIGNER
+                          or SSH_AUTH_SOCK set
   prove run --name <n> [flags] -- <cmd>  run one command with no config
       --input <glob>      an input file glob (repeatable; default: the whole repo)
       --lockfile <glob>   a lockfile glob (repeatable)
       --junit <path>      JUnit XML report the command writes
+  prove sign <dir> [--commit <rev>] [--checkout-policy] [--onto <ref>]
+                                         sign the results run --unsigned wrote to dir,
+                                         running nothing: each record's tree, command,
+                                         inputs and fingerprint come from git and the
+                                         policy, and only the exit code, times and tests
+                                         from the result. The flags are run's: give the
+                                         ones the run had
   prove verify [commit] [--sample <pct>] [--format text|json] [--onto <ref>]
                                          check every policy check of a commit (default HEAD)
   prove show [commit] [--format md|json] [--onto <ref>]
@@ -77,6 +89,8 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "run":
 		code, err = cmdRun(ctx, args[1:], stdout, stderr)
+	case "sign":
+		code, err = cmdSign(ctx, args[1:], stderr)
 	case "verify":
 		code, err = cmdVerify(ctx, args[1:], stdout, stderr)
 	case "show":
@@ -161,6 +175,25 @@ func (e *env) at(ctx context.Context, rev string) (*env, func(), error) {
 		return fail(err)
 	}
 	return &env{repo: repo, policy: policy, store: st}, cleanup, nil
+}
+
+// forCommit is e.at for rev, or with onto, rev merged into onto (see
+// target). With checkoutPolicy, the policy and store stay e's.
+func (e *env) forCommit(ctx context.Context, rev, onto string, checkoutPolicy bool, stderr io.Writer) (*env, func(), error) {
+	commit, err := target(ctx, e.repo, rev, onto, stderr)
+	if err != nil {
+		return nil, nil, err
+	}
+	at, cleanup, err := e.at(ctx, commit)
+	if err != nil {
+		return nil, nil, err
+	}
+	if checkoutPolicy {
+		// Run and sign the checks as prove verify here will judge them, so
+		// --stale and the records made agree with that verify.
+		at.policy, at.store = e.policy, e.store
+	}
+	return at, cleanup, nil
 }
 
 // target resolves rev, or with onto, the commit that merging rev into onto
@@ -255,6 +288,8 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (int, 
 	rev := fs.String("commit", "", "")
 	here := fs.Bool("checkout-policy", false, "")
 	onto := fs.String("onto", "", "")
+	unsigned := fs.Bool("unsigned", false, "")
+	out := fs.String("out", "", "")
 	var inputs, lockfiles multi
 	fs.Var(&inputs, "input", "")
 	fs.Var(&lockfiles, "lockfile", "")
@@ -269,6 +304,19 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (int, 
 	if *here && *rev == "" {
 		return 0, usageError{"--checkout-policy goes with --commit: without it, the checkout's policy is used anyway"}
 	}
+	if *unsigned != (*out != "") {
+		return 0, usageError{"--unsigned and --out <dir> go together: an unsigned run writes its results to that folder for prove sign"}
+	}
+	if *unsigned {
+		if adHoc {
+			return 0, usageError{"--unsigned runs checks from " + config.FileName + ": prove sign takes the command from the policy, so it can't sign an ad-hoc command"}
+		}
+		for _, k := range []string{"PROVE_SSH_KEY", "PROVE_SIGNER", "SSH_AUTH_SOCK"} {
+			if os.Getenv(k) != "" {
+				return 0, usageError{fmt.Sprintf("--unsigned with %s set: the signing key must not be in the environment of the checks; unset it here and set it only where prove sign runs", k)}
+			}
+		}
+	}
 	e, err := load(ctx)
 	if err != nil {
 		return 0, err
@@ -277,24 +325,20 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (int, 
 		*rev = "HEAD"
 	}
 	if *rev != "" {
-		commit, err := target(ctx, e.repo, *rev, *onto, stderr)
-		if err != nil {
-			return 0, err
-		}
-		at, cleanup, err := e.at(ctx, commit)
+		at, cleanup, err := e.forCommit(ctx, *rev, *onto, *here, stderr)
 		if err != nil {
 			return 0, err
 		}
 		defer cleanup()
-		if *here {
-			// Run the checks as prove verify here will judge them, so
-			// --stale and the records it makes agree with that verify.
-			at.policy, at.store = e.policy, e.store
-		}
 		e = at
 	} else if err := runner.CheckClean(ctx, e.repo); err != nil {
 		// Refuse a dirty tree before anything else, so nothing is run or stored.
 		return 0, err
+	}
+	// With no signers, --stale planning would trust this machine's key and
+	// so load it, and prove sign's records must be signed by a listed key.
+	if *unsigned && (e.policy == nil || len(e.policy.Signers) == 0) {
+		return 0, usageError{fmt.Sprintf("--unsigned needs signers in %s: the records prove sign makes must be signed by a key the policy lists", config.FileName)}
 	}
 
 	var checks []config.Check
@@ -338,6 +382,13 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (int, 
 		}
 	}
 
+	if *unsigned {
+		// Made before --stale planning, so a plan that runs nothing still
+		// leaves a folder for prove sign to read.
+		if err := os.MkdirAll(*out, 0o755); err != nil {
+			return 0, err
+		}
+	}
 	if *stale {
 		p, err := makePlan(ctx, e, "HEAD", stderr)
 		if err != nil {
@@ -365,13 +416,16 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (int, 
 		checks = todo
 	}
 
-	s, err := signer.FromEnv(ctx, e.repo, stderr)
-	if err != nil {
-		return 0, err
-	}
 	var req *regexp.Regexp
 	if e.policy != nil && e.policy.Requirements.Pattern != "" {
 		req = regexp.MustCompile(e.policy.Requirements.Pattern)
+	}
+	if *unsigned {
+		return runUnsigned(ctx, e, checks, req, *out, stdout, stderr)
+	}
+	s, err := signer.FromEnv(ctx, e.repo, stderr)
+	if err != nil {
+		return 0, err
 	}
 	code := exitOK
 	for _, c := range checks {
@@ -382,12 +436,18 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (int, 
 		if err != nil {
 			return 0, fmt.Errorf("%s: %w", c.Name, err)
 		}
-		p := out.Statement.Predicate
-		fmt.Fprintf(stderr, "prove: %s %s (exit %d), signed by %s, record %s in the %s\n",
-			c.Name, p.Result, p.ExitCode, p.Signer, out.ID[:12], e.store.Name())
-		if p.ExitCode != 0 {
+		if reportSigned(stderr, out, e.store) {
 			code = exitFail
 		}
 	}
 	return code, nil
+}
+
+// reportSigned prints the line for a stored record and reports whether its
+// check failed.
+func reportSigned(w io.Writer, out *runner.Outcome, st store.Store) (failed bool) {
+	p := out.Statement.Predicate
+	fmt.Fprintf(w, "prove: %s %s (exit %d), signed by %s, record %s in the %s\n",
+		p.Check, p.Result, p.ExitCode, p.Signer, out.ID[:12], st.Name())
+	return p.ExitCode != 0
 }

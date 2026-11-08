@@ -32,6 +32,8 @@ $ prove show --format md    # what is recorded for this commit, as a table
 $ prove plan                # per check: accept its record, or run it (and why)
 $ prove run --stale         # run only the checks with no valid record
 $ prove push                # share this commit's records
+$ prove run --unsigned --out /tmp/results   # run with no key loaded, write unsigned results
+$ prove sign /tmp/results   # sign them, running nothing from the repo
 ```
 
 It is one static Go binary. It works offline and with any CI.
@@ -203,20 +205,58 @@ merged into the base branch, so a change on the base that breaks the
 branch fails the job; pass `commit:` the head's sha to verify the branch
 alone.
 
-With `mode: run`, a check with no valid record costs a CI run instead of a
-red job: the action prints `prove plan`, runs `prove run --stale` on the
-commit, then verifies, all three with the checkout's policy (`prove run
---checkout-policy`). The job fails only when a check itself fails. It
-signs with the job's key (`PROVE_SSH_KEY` from a secret), which the policy
-must trust.
+To make a check with no valid record cost a CI run instead of a red job,
+use two jobs, so the job that runs repo code never holds the signing key:
+
+- `mode: run` prints `prove plan` and runs `prove run --stale --unsigned`
+  on the commit with the checkout's policy. It loads no key, and refuses
+  to start when `PROVE_SSH_KEY`, `PROVE_SIGNER` or `SSH_AUTH_SOCK` is set.
+  It writes each check's result to the `results` folder (default
+  `${{ runner.temp }}/prove-results`) and fails only on a usage error.
+- `mode: sign` runs `prove sign` on those results, then `prove verify` and
+  the job summary. It runs no repo code, so it runs no check, refuses
+  `--sample` in `args`, and ignores the policy's `sample:`. It signs with
+  `PROVE_SSH_KEY`, which the policy must trust, and fails when verify
+  fails, so a failing check fails this job.
 
 ```yaml
-- uses: jayehmke/prove/action@v0.1.0
-  with:
-    mode: run
-  env:
-    PROVE_SSH_KEY: ${{ runner.temp }}/prove_key   # written from a secret
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jayehmke/prove/action@v0.1.0
+        with:
+          mode: run
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prove-results
+          path: ${{ runner.temp }}/prove-results
+  sign:
+    needs: run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: prove-results
+          path: ${{ runner.temp }}/prove-results
+      - name: Write the signing key
+        env:
+          KEY: ${{ secrets.PROVE_SIGNING_KEY }}
+        run: |
+          umask 077
+          printf '%s\n' "$KEY" >"$RUNNER_TEMP/prove_key"
+      - uses: jayehmke/prove/action@v0.1.0
+        with:
+          mode: sign
+        env:
+          PROVE_SSH_KEY: ${{ runner.temp }}/prove_key
 ```
+
+Only the sign job reads the secret. [Signing](#signing) says what
+`prove sign` takes from the results and what it works out itself, and
+where two jobs are not enough.
 
 How the action trusts the prove it runs: it installs the exact release
 pinned in `action/VERSION` at the action ref you use (or `version:`; never
@@ -240,6 +280,44 @@ Any other CI runs the same two commands: `prove verify`, then
 SSH signatures use the SSHSIG format with namespace `prove`, so
 `ssh-keygen -Y verify -n prove` accepts them and they can't be replayed as
 git commit signatures.
+
+### Sign where no repo code runs
+
+`prove run` loads the key, then runs each check as its child, so a check
+can read the key from its environment or from the key file. Where anyone
+who lands code controls the checks, as in CI, split the run from the
+signing:
+
+```sh
+prove run --unsigned --out "$RUNNER_TEMP/prove-results"   # a job with no key
+prove sign "$RUNNER_TEMP/prove-results"                   # a job with the key
+```
+
+`prove run --unsigned` writes each check's result to `<dir>/<check>.json`
+and stores no record. It refuses to start when `PROVE_SSH_KEY`,
+`PROVE_SIGNER` or `SSH_AUTH_SOCK` is set (an ssh-agent signs without the key
+file), refuses an ad-hoc command, and needs `signers:` in
+`.prove.yaml`.
+
+A result file is untrusted, because the checks that wrote it can rewrite
+it. `prove sign` takes from it only what the run alone knows: the exit
+code, the start and finish times, and the test results read from JUnit.
+It works out the rest from git and the policy: the tree, the command, the
+inputs and lockfiles, and the fingerprint. It refuses a result for
+another commit, for a check that is not in the policy, with a
+fingerprint other than the one it works out, or with a field it does not
+know (a `command` or `signer`, say). It runs no check and does no sampling. Give it the same `--commit`,
+`--checkout-policy` and `--onto` that the run had.
+
+So code in the run job can still report its own check as passed. It
+could always do that by changing the test. It can't make a record of
+another commit, another check or another command, and it never gets a
+signature.
+
+Two jobs keep the key apart only when they share no process and no
+user. On a persistent self-hosted runner, a process that the run job left
+running as the same user can read the sign job's environment and key
+file. Run the sign job on an ephemeral runner, or as another user.
 
 ## Stores
 
