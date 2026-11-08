@@ -87,7 +87,8 @@ func publish(t *testing.T, policy string, record bool) (clone string, env []stri
 	return clone, env
 }
 
-// withoutKey is env with no PROVE_SSH_KEY, as in a job that runs repo code.
+// withoutKey is env with no PROVE_SSH_KEY and no ssh-agent, as in a job
+// that runs repo code.
 func withoutKey(env []string) []string {
 	var out []string
 	for _, kv := range env {
@@ -95,7 +96,7 @@ func withoutKey(env []string) []string {
 			out = append(out, kv)
 		}
 	}
-	return out
+	return append(out, "SSH_AUTH_SOCK=")
 }
 
 // runThenSign runs verify.sh in run mode with no key, as the job that runs

@@ -42,7 +42,8 @@ Usage:
       --unsigned --out <dir>
                           load no signing key: write each check's result to
                           <dir>/<check>.json for prove sign, store no record.
-                          Refused with PROVE_SSH_KEY or PROVE_SIGNER set
+                          Refused with PROVE_SSH_KEY, PROVE_SIGNER
+                          or SSH_AUTH_SOCK set
   prove run --name <n> [flags] -- <cmd>  run one command with no config
       --input <glob>      an input file glob (repeatable; default: the whole repo)
       --lockfile <glob>   a lockfile glob (repeatable)
@@ -310,7 +311,7 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (int, 
 		if adHoc {
 			return 0, usageError{"--unsigned runs checks from " + config.FileName + ": prove sign takes the command from the policy, so it can't sign an ad-hoc command"}
 		}
-		for _, k := range []string{"PROVE_SSH_KEY", "PROVE_SIGNER"} {
+		for _, k := range []string{"PROVE_SSH_KEY", "PROVE_SIGNER", "SSH_AUTH_SOCK"} {
 			if os.Getenv(k) != "" {
 				return 0, usageError{fmt.Sprintf("--unsigned with %s set: the signing key must not be in the environment of the checks; unset it here and set it only where prove sign runs", k)}
 			}

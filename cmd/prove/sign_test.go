@@ -30,8 +30,10 @@ checks:
 // runs repo code.
 func noKey(t *testing.T) {
 	t.Helper()
-	t.Setenv("PROVE_SSH_KEY", "")
-	_ = os.Unsetenv("PROVE_SSH_KEY")
+	for _, k := range []string{"PROVE_SSH_KEY", "SSH_AUTH_SOCK"} {
+		t.Setenv(k, "")
+		_ = os.Unsetenv(k)
+	}
 }
 
 func readResult(t *testing.T, path string) runner.Result {
@@ -110,6 +112,8 @@ checks:
 			[]string{"PROVE_SSH_KEY=$KEY"}, "PROVE_SSH_KEY set"},
 		{"FLU-937 PROVE_SIGNER in the environment", unsignedPolicy, []string{"--unsigned", "--out", "$OUT"},
 			[]string{"PROVE_SIGNER=ssh"}, "PROVE_SIGNER set"},
+		{"FLU-937 an ssh-agent socket, which signs without the key file", unsignedPolicy, []string{"--unsigned", "--out", "$OUT"},
+			[]string{"SSH_AUTH_SOCK=/tmp/agent.sock"}, "SSH_AUTH_SOCK set"},
 		{"FLU-937 a policy with no signers", noSigners, []string{"--unsigned", "--out", "$OUT", "--stale"}, nil, "needs signers"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

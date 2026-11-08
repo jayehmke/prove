@@ -210,8 +210,8 @@ use two jobs, so the job that runs repo code never holds the signing key:
 
 - `mode: run` prints `prove plan` and runs `prove run --stale --unsigned`
   on the commit with the checkout's policy. It loads no key, and refuses
-  to start when `PROVE_SSH_KEY` or `PROVE_SIGNER` is set. It writes each
-  check's result to the `results` folder (default
+  to start when `PROVE_SSH_KEY`, `PROVE_SIGNER` or `SSH_AUTH_SOCK` is set.
+  It writes each check's result to the `results` folder (default
   `${{ runner.temp }}/prove-results`) and fails only on a usage error.
 - `mode: sign` runs `prove sign` on those results, then `prove verify` and
   the job summary. It runs no repo code, so it runs no check, refuses
@@ -294,8 +294,9 @@ prove sign "$RUNNER_TEMP/prove-results"                   # a job with the key
 ```
 
 `prove run --unsigned` writes each check's result to `<dir>/<check>.json`
-and stores no record. It refuses to start when `PROVE_SSH_KEY` or
-`PROVE_SIGNER` is set, refuses an ad-hoc command, and needs `signers:` in
+and stores no record. It refuses to start when `PROVE_SSH_KEY`,
+`PROVE_SIGNER` or `SSH_AUTH_SOCK` is set (an ssh-agent signs without the key
+file), refuses an ad-hoc command, and needs `signers:` in
 `.prove.yaml`.
 
 A result file is untrusted, because the checks that wrote it can rewrite
