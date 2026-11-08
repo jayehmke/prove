@@ -42,16 +42,36 @@ Everything on `main` so far; nothing has been released yet.
 - An example git `pre-push` hook that makes and pushes records on every
   push.
 - A GitHub action that verifies records and posts them as the job summary,
-  or runs the missing checks first (`mode: run`). It installs the prove
-  release it is pinned to, checked against `checksums.txt` and its build
-  attestation, and never a `prove` already on `PATH`.
+  or runs the missing checks in one job (`mode: run`) and signs their
+  results in another (`mode: sign`). It installs the prove release it is
+  pinned to, checked against `checksums.txt` and its build attestation,
+  and never a `prove` already on `PATH`.
 - Release builds for linux and macOS on amd64 and arm64, with checksums and
   GitHub build attestations.
+- `prove run --unsigned --out <dir>` runs checks with no signing key
+  loaded and writes each result to `<dir>/<check>.json` instead of
+  storing a record. `prove sign <dir>` signs those results and runs
+  nothing from the repository. It takes the exit code, times and test
+  results from each result, and works out the tree, command, inputs and
+  fingerprint from git and the policy.
+
+### Changed
+
+- The action's `mode: run` no longer signs or verifies. It runs the stale
+  checks with `prove run --unsigned`, writes their results to the folder
+  in the new `results` input, and fails only on a usage error. The new
+  `mode: sign` signs those results in a later job that holds the key,
+  then verifies. A workflow that used `mode: run` needs both jobs; see
+  the README.
 
 ### Security
 
 - With no key configured, prove names the `~/.ssh` key it falls back to,
   and refuses that fallback when `CI=true`.
+- A CI job that runs repo code no longer needs the signing key. `prove run`
+  runs each check under a process that holds the key, and the action's
+  `mode: run` used it, so code that landed on the main branch could read
+  the CI key and sign a passing record of any check.
 - `golang.org/x/crypto` is v0.55.0, which fixes three vulnerabilities the
   signer can reach (GO-2025-4116, GO-2026-5018, GO-2026-5019). prove now
   needs Go 1.25 and builds with Go 1.25.14.
