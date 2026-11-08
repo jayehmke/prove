@@ -87,6 +87,32 @@ func publish(t *testing.T, policy string, record bool) (clone string, env []stri
 	return clone, env
 }
 
+// withoutKey is env with no PROVE_SSH_KEY, as in a job that runs repo code.
+func withoutKey(env []string) []string {
+	var out []string
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, "PROVE_SSH_KEY=") {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
+// runThenSign runs verify.sh in run mode with no key, as the job that runs
+// the checks, then in sign mode with env's key, as the job after it, both
+// in dir and sharing a results folder. It returns the sign job's exit code
+// and both jobs' output.
+func runThenSign(t *testing.T, script, dir string, env []string) (int, string) {
+	t.Helper()
+	env = append(env, "PROVE_RESULTS="+filepath.Join(t.TempDir(), "results"))
+	runCode, runOut := sh(t, dir, append(withoutKey(env), "PROVE_MODE=run"), "bash", script)
+	if runCode != 0 {
+		t.Fatalf("run mode exited %d, want 0 (the sign job reports a failing check):\n%s", runCode, runOut)
+	}
+	code, signOut := sh(t, dir, append(env, "PROVE_MODE=sign"), "bash", script)
+	return code, runOut + signOut
+}
+
 const policyHead = `version: 1
 signers:
   ci: $KEY
@@ -145,20 +171,26 @@ func TestActionRunModeRunsMissingRecords(t *testing.T) {
 	}{
 		{"verify mode fails a commit with no records", policyHead, "verify", false, 1,
 			[]string{"no record of check"}, []string{"**FAIL**"}},
-		{"run mode runs a check with no record and passes", policyHead, "run", false, 0,
-			[]string{"build  run (no record)", "build is stale (no record)"}, []string{"**PASS**", "| build | pass | ci |"}},
-		{"run mode runs nothing that has a valid record", policyHead, "run", true, 0,
-			[]string{"build has a current signed record, not running it"}, []string{"**PASS**"}},
-		{"run mode fails when the check itself fails", policyHead + `  - name: unit
+		{"FLU-937 run then sign mode runs a check with no record, signs it and passes", policyHead, "run", false, 0,
+			[]string{"build  run (no record)", "build is stale (no record)", "build pass (exit 0), signed by"}, []string{"**PASS**", "| build | pass | ci |"}},
+		{"FLU-937 run then sign mode runs nothing that has a valid record, and the sign job needs no result", policyHead, "run", true, 0,
+			[]string{"build has a current signed record, not running it", "nothing to sign"}, []string{"**PASS**"}},
+		{"FLU-937 run then sign mode fails when the check itself fails", policyHead + `  - name: unit
     run: "false"
 `, "run", false, 1, []string{"unit is stale (no record)"}, []string{"**FAIL**", "| build | pass | ci |", "| unit | fail | ci |"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			clone, env := publish(t, tc.policy, tc.record)
 			summary := filepath.Join(t.TempDir(), "summary.md")
-			env = append(env, "GITHUB_STEP_SUMMARY="+summary, "PROVE_MODE="+tc.mode,
+			env = append(env, "GITHUB_STEP_SUMMARY="+summary,
 				"PROVE_COMMIT="+strings.TrimSpace(testutil.Git(t, clone, "rev-parse", "HEAD")))
-			code, out := sh(t, clone, env, "bash", script)
+			var code int
+			var out string
+			if tc.mode == "run" {
+				code, out = runThenSign(t, script, clone, env)
+			} else {
+				code, out = sh(t, clone, append(env, "PROVE_MODE="+tc.mode), "bash", script)
+			}
 			if code != tc.code {
 				t.Fatalf("verify.sh exited %d, want %d:\n%s", code, tc.code, out)
 			}
@@ -207,8 +239,14 @@ func TestActionRunModeUsesTheCheckoutsPolicy(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			clone := filepath.Join(t.TempDir(), "clone")
 			testutil.Git(t, repo.Dir, "clone", "-q", "file://"+origin, clone)
-			code, out := sh(t, clone, append(env, "PROVE_MODE="+mode, "PROVE_COMMIT="+head,
-				"GITHUB_STEP_SUMMARY="+filepath.Join(t.TempDir(), "summary.md")), "bash", script)
+			env := append(env, "PROVE_COMMIT="+head, "GITHUB_STEP_SUMMARY="+filepath.Join(t.TempDir(), "summary.md"))
+			var code int
+			var out string
+			if mode == "run" {
+				code, out = runThenSign(t, script, clone, env)
+			} else {
+				code, out = sh(t, clone, append(env, "PROVE_MODE="+mode), "bash", script)
+			}
 			want := map[string]int{"verify": 1, "run": 0}[mode]
 			if code != want {
 				t.Fatalf("verify.sh in %s mode exited %d, want %d:\n%s", mode, code, want, out)
@@ -269,15 +307,88 @@ checks:
 	}{
 		{"the head alone verifies (what the head default checked)", head, "verify", 0},
 		{"the merge commit (the default now) fails verify", merge, "verify", 1},
-		{"the merge commit fails run mode: web reruns on the merge and fails", merge, "run", 1},
+		{"the merge commit fails run then sign mode: web reruns on the merge and fails", merge, "run", 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			env := append(env, "GITHUB_STEP_SUMMARY="+filepath.Join(t.TempDir(), "summary.md"), "PROVE_COMMIT="+tc.commit, "PROVE_MODE="+tc.mode)
-			if code, out := sh(t, clone, env, "bash", script); code != tc.code {
+			env := append(env, "GITHUB_STEP_SUMMARY="+filepath.Join(t.TempDir(), "summary.md"), "PROVE_COMMIT="+tc.commit)
+			var code int
+			var out string
+			if tc.mode == "run" {
+				code, out = runThenSign(t, script, clone, env)
+			} else {
+				code, out = sh(t, clone, append(env, "PROVE_MODE="+tc.mode), "bash", script)
+			}
+			if code != tc.code {
 				t.Fatalf("verify.sh exited %d, want %d:\n%s", code, tc.code, out)
 			}
 		})
 	}
+}
+
+func TestActionKeepsTheKeyFromRepoCode(t *testing.T) {
+	script, err := filepath.Abs("verify.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// published runs a policy whose check logs each run outside the clone
+	// and that samples every check, and returns the clone and a line count.
+	published := func(t *testing.T) (string, []string, func() int) {
+		ran := filepath.Join(t.TempDir(), "ran")
+		clone, env := publish(t, policyHead+`  - name: log
+    run: "echo ran >> '`+ran+`'"
+sample: 100
+`, false)
+		env = append(env, "GITHUB_STEP_SUMMARY="+filepath.Join(t.TempDir(), "summary.md"),
+			"PROVE_COMMIT="+strings.TrimSpace(testutil.Git(t, clone, "rev-parse", "HEAD")),
+			"PROVE_RESULTS="+filepath.Join(t.TempDir(), "results"))
+		return clone, env, func() int {
+			data, _ := os.ReadFile(ran)
+			return strings.Count(string(data), "\n")
+		}
+	}
+
+	t.Run("FLU-937 run mode refuses a job that holds the key, before running a check", func(t *testing.T) {
+		clone, env, ran := published(t)
+		code, out := sh(t, clone, append(env, "PROVE_MODE=run"), "bash", script)
+		if code != 2 || !strings.Contains(out, "PROVE_SSH_KEY set") {
+			t.Fatalf("run mode with PROVE_SSH_KEY exited %d, want 2 saying why:\n%s", code, out)
+		}
+		if n := ran(); n != 0 {
+			t.Fatalf("a refused run mode ran the check %d times", n)
+		}
+	})
+
+	for _, args := range []string{"--sample 10", "-sample=10"} {
+		t.Run("FLU-937 sign mode refuses "+args+" in args: sampling reruns checks", func(t *testing.T) {
+			clone, env, ran := published(t)
+			if code, out := sh(t, clone, append(withoutKey(env), "PROVE_MODE=run"), "bash", script); code != 0 {
+				t.Fatalf("run mode exited %d:\n%s", code, out)
+			}
+			code, out := sh(t, clone, append(env, "PROVE_MODE=sign", "PROVE_ARGS="+args), "bash", script)
+			if code != 2 || !strings.Contains(out, "sign mode can't take --sample") {
+				t.Fatalf("sign mode with %s exited %d, want 2:\n%s", args, code, out)
+			}
+			if n := ran(); n != 1 {
+				t.Fatalf("the check ran %d times, want once (in run mode)", n)
+			}
+		})
+	}
+
+	t.Run("FLU-937 sign mode reruns no check though the policy samples every check, which verify mode does", func(t *testing.T) {
+		clone, env, ran := published(t)
+		if code, out := runThenSign(t, script, clone, env); code != 0 {
+			t.Fatalf("run then sign mode exited %d:\n%s", code, out)
+		}
+		if n := ran(); n != 1 {
+			t.Fatalf("run then sign ran the check %d times, want once (in run mode)", n)
+		}
+		if code, out := sh(t, clone, append(env, "PROVE_MODE=verify"), "bash", script); code != 0 {
+			t.Fatalf("verify mode exited %d:\n%s", code, out)
+		}
+		if n := ran(); n != 2 {
+			t.Fatalf("verify mode should rerun the sampled check, which has now run %d times", n)
+		}
+	})
 }
 
 func TestActionRunsItsScripts(t *testing.T) {
@@ -304,6 +415,10 @@ func TestActionRunsItsScripts(t *testing.T) {
 	// On a pull request github.sha is the head merged into the base.
 	if got := a.Inputs["commit"].Default; got != "${{ github.sha }}" {
 		t.Fatalf("commit defaults to %q, want the merge commit ${{ github.sha }}", got)
+	}
+	// The README's upload and download steps name this folder.
+	if got := a.Inputs["results"].Default; got != "${{ runner.temp }}/prove-results" {
+		t.Fatalf("results defaults to %q, want ${{ runner.temp }}/prove-results", got)
 	}
 	if a.Runs.Using != "composite" || len(a.Runs.Steps) != 2 {
 		t.Fatalf("want a composite action with two steps, got %+v", a.Runs)

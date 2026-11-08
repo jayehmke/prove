@@ -10,8 +10,11 @@ inputs:
     description: The commit to verify. Default github.sha, which on a pull request is the head merged into the base branch, so records of the head alone can't hide a break the base brings in (inputs the base changed are rerun or fail). Pass the head's sha to verify the branch alone.
     default: ${{ github.sha }}
   mode:
-    description: verify only checks records. run first runs the checks prove plan says have no valid record (signing with this job's key, which the policy must trust), then verifies.
+    description: verify only checks records. run is for a job that runs repo code and has no signing key. It runs the checks prove plan says have no valid record with prove run --unsigned, writes their results to the results folder and verifies nothing, so it fails only on a usage error (PROVE_SSH_KEY set, say). sign is for a later job that holds the key (PROVE_SSH_KEY, which the policy must trust) and runs no repo code. It signs those results with prove sign, then verifies without sampling.
     default: verify
+  results:
+    description: The folder run mode writes results to and sign mode reads them from. Upload it from the run job and download it in the sign job.
+    default: ${{ runner.temp }}/prove-results
   args:
     description: More arguments for prove verify, such as --sample 10.
     default: ""
@@ -47,6 +50,7 @@ runs:
       env:
         PROVE_COMMIT: ${{ inputs.commit }}
         PROVE_MODE: ${{ inputs.mode }}
+        PROVE_RESULTS: ${{ inputs.results }}
         PROVE_ARGS: ${{ inputs.args }}
         PROVE_FETCH_RECORDS: ${{ inputs.fetch-records }}
       run: '"$GITHUB_ACTION_PATH/verify.sh"'
