@@ -422,3 +422,38 @@ checks:
 		}
 	})
 }
+
+func TestSignOnto(t *testing.T) {
+	t.Run("FLU-937 sign --onto in another clone signs the merge commit run --unsigned --onto tested, which only the run's clone has", func(t *testing.T) {
+		repo, key := setup(t, `
+signers:
+  tester: $TESTER
+checks:
+  - name: unit
+    run: "test -f base.txt && test -f feature.txt"
+`)
+		testutil.Git(t, repo.Dir, "checkout", "-q", "-b", "feature")
+		testutil.WriteFile(t, repo, "feature.txt", "feature\n")
+		testutil.Commit(t, repo, "feature")
+		testutil.Git(t, repo.Dir, "checkout", "-q", "main")
+		testutil.WriteFile(t, repo, "base.txt", "base\n")
+		testutil.Commit(t, repo, "base")
+		testutil.Git(t, repo.Dir, "checkout", "-q", "feature")
+		out := unsignedRun(t, 0, "--onto", "main")
+
+		clone := filepath.Join(t.TempDir(), "clone")
+		testutil.Git(t, repo.Dir, "clone", "-q", "--branch", "feature", "file://"+repo.Dir, clone)
+		t.Chdir(clone)
+		t.Setenv("PROVE_SSH_KEY", key.Path)
+		merge := readResult(t, filepath.Join(out, "unit.json")).Commit
+		if code, _, errOut := prove(t, "sign", out, "--commit", merge); code != 2 {
+			t.Fatalf("the merge commit should be unknown in this clone, but sign --commit %s exited %d:\n%s", short(merge), code, errOut)
+		}
+		if code, _, errOut := prove(t, "sign", out, "--onto", "origin/main"); code != 0 {
+			t.Fatalf("prove sign --onto exited %d:\n%s", code, errOut)
+		}
+		if code, verifyOut, errOut := prove(t, "verify", "--onto", "origin/main"); code != 0 {
+			t.Fatalf("prove verify --onto exited %d:\n%s%s", code, verifyOut, errOut)
+		}
+	})
+}

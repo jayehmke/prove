@@ -56,12 +56,13 @@ func cmdSign(ctx context.Context, args []string, stderr io.Writer) (int, error) 
 	fs := flag.NewFlagSet("sign", flag.ContinueOnError)
 	rev := fs.String("commit", "", "")
 	here := fs.Bool("checkout-policy", false, "")
+	onto := fs.String("onto", "", "")
 	pos, rest, err := parse(fs, args)
 	if err != nil {
 		return 0, err
 	}
 	if rest != nil || len(pos) != 1 {
-		return 0, usageError{"sign is: prove sign <dir> [--commit <rev>] [--checkout-policy]"}
+		return 0, usageError{"sign is: prove sign <dir> [--commit <rev>] [--checkout-policy] [--onto <ref>]"}
 	}
 	if *here && *rev == "" {
 		return 0, usageError{"--checkout-policy goes with --commit: without it, the checkout's policy is used anyway"}
@@ -70,8 +71,13 @@ func cmdSign(ctx context.Context, args []string, stderr io.Writer) (int, error) 
 	if err != nil {
 		return 0, err
 	}
+	// The merge commit a run --onto tested exists only where it ran, so
+	// sign makes it again (MergeOnto gives the same commit for the same pair).
+	if *onto != "" && *rev == "" {
+		*rev = "HEAD"
+	}
 	if *rev != "" {
-		at, cleanup, err := e.forCommit(ctx, *rev, "", *here, stderr)
+		at, cleanup, err := e.forCommit(ctx, *rev, *onto, *here, stderr)
 		if err != nil {
 			return 0, err
 		}

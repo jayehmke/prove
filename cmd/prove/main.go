@@ -47,13 +47,13 @@ Usage:
       --input <glob>      an input file glob (repeatable; default: the whole repo)
       --lockfile <glob>   a lockfile glob (repeatable)
       --junit <path>      JUnit XML report the command writes
-  prove sign <dir> [--commit <rev>] [--checkout-policy]
+  prove sign <dir> [--commit <rev>] [--checkout-policy] [--onto <ref>]
                                          sign the results run --unsigned wrote to dir,
                                          running nothing: each record's tree, command,
                                          inputs and fingerprint come from git and the
                                          policy, and only the exit code, times and tests
-                                         from the result. --commit and --checkout-policy
-                                         as for run
+                                         from the result. The flags are run's: give the
+                                         ones the run had
   prove verify [commit] [--sample <pct>] [--format text|json] [--onto <ref>]
                                          check every policy check of a commit (default HEAD)
   prove show [commit] [--format md|json] [--onto <ref>]
