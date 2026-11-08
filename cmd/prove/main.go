@@ -39,6 +39,10 @@ Usage:
                           verify reads here), not the commit's
       --onto <ref>        run on the commit (default HEAD) merged into ref,
                           as a pull request's CI tests it
+      --unsigned --out <dir>
+                          load no signing key: write each check's result to
+                          <dir>/<check>.json for prove sign, store no record.
+                          Refused with PROVE_SSH_KEY or PROVE_SIGNER set
   prove run --name <n> [flags] -- <cmd>  run one command with no config
       --input <glob>      an input file glob (repeatable; default: the whole repo)
       --lockfile <glob>   a lockfile glob (repeatable)
@@ -255,6 +259,8 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (int, 
 	rev := fs.String("commit", "", "")
 	here := fs.Bool("checkout-policy", false, "")
 	onto := fs.String("onto", "", "")
+	unsigned := fs.Bool("unsigned", false, "")
+	out := fs.String("out", "", "")
 	var inputs, lockfiles multi
 	fs.Var(&inputs, "input", "")
 	fs.Var(&lockfiles, "lockfile", "")
@@ -268,6 +274,19 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (int, 
 	}
 	if *here && *rev == "" {
 		return 0, usageError{"--checkout-policy goes with --commit: without it, the checkout's policy is used anyway"}
+	}
+	if *unsigned != (*out != "") {
+		return 0, usageError{"--unsigned and --out <dir> go together: an unsigned run writes its results to that folder for prove sign"}
+	}
+	if *unsigned {
+		if adHoc {
+			return 0, usageError{"--unsigned runs checks from " + config.FileName + ": prove sign takes the command from the policy, so it can't sign an ad-hoc command"}
+		}
+		for _, k := range []string{"PROVE_SSH_KEY", "PROVE_SIGNER"} {
+			if os.Getenv(k) != "" {
+				return 0, usageError{fmt.Sprintf("--unsigned with %s set: the signing key must not be in the environment of the checks; unset it here and set it only where prove sign runs", k)}
+			}
+		}
 	}
 	e, err := load(ctx)
 	if err != nil {
@@ -295,6 +314,11 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (int, 
 	} else if err := runner.CheckClean(ctx, e.repo); err != nil {
 		// Refuse a dirty tree before anything else, so nothing is run or stored.
 		return 0, err
+	}
+	// With no signers, --stale planning would trust this machine's key and
+	// so load it, and prove sign's records must be signed by a listed key.
+	if *unsigned && (e.policy == nil || len(e.policy.Signers) == 0) {
+		return 0, usageError{fmt.Sprintf("--unsigned needs signers in %s: the records prove sign makes must be signed by a key the policy lists", config.FileName)}
 	}
 
 	var checks []config.Check
@@ -338,6 +362,13 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (int, 
 		}
 	}
 
+	if *unsigned {
+		// Made before --stale planning, so a plan that runs nothing still
+		// leaves a folder for prove sign to read.
+		if err := os.MkdirAll(*out, 0o755); err != nil {
+			return 0, err
+		}
+	}
 	if *stale {
 		p, err := makePlan(ctx, e, "HEAD", stderr)
 		if err != nil {
@@ -365,13 +396,16 @@ func cmdRun(ctx context.Context, args []string, stdout, stderr io.Writer) (int, 
 		checks = todo
 	}
 
-	s, err := signer.FromEnv(ctx, e.repo, stderr)
-	if err != nil {
-		return 0, err
-	}
 	var req *regexp.Regexp
 	if e.policy != nil && e.policy.Requirements.Pattern != "" {
 		req = regexp.MustCompile(e.policy.Requirements.Pattern)
+	}
+	if *unsigned {
+		return runUnsigned(ctx, e, checks, req, *out, stdout, stderr)
+	}
+	s, err := signer.FromEnv(ctx, e.repo, stderr)
+	if err != nil {
+		return 0, err
 	}
 	code := exitOK
 	for _, c := range checks {
