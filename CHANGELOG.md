@@ -72,8 +72,8 @@ Everything on `main` so far; nothing has been released yet.
   runs each check under a process that holds the key, and the action's
   `mode: run` used it, so code that landed on the main branch could read
   the CI key and sign a passing record of any check.
-- `golang.org/x/crypto` is v0.55.0, which fixes three vulnerabilities the
-  signer can reach (GO-2025-4116, GO-2026-5018, GO-2026-5019). prove now
-  needs Go 1.25 and builds with Go 1.25.14.
+- `golang.org/x/crypto` is v0.59.0, which includes the v0.55.0 fixes for
+  three vulnerabilities the signer can reach (GO-2025-4116, GO-2026-5018,
+  GO-2026-5019). prove now needs Go 1.26.
 
 [Unreleased]: https://github.com/jayehmke/prove/commits/main
